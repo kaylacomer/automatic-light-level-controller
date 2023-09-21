@@ -5,5 +5,9 @@
         "interface/ftdi/esp32_devkitj_v1.cfg",
         "target/esp32.cfg"
     ],
-    "idf.flashType": "UART"
+    "idf.flashType": "UART",
+    "files.associations": {
+        "freertos.h": "c",
+        "inttypes.h": "c"
+    }
 }
