@@ -149,6 +149,50 @@ static esp_err_t i2c_master_init(void)
 //////////////////////////////////////////////////
 // Light sensor reading timer
 //////////////////////////////////////////////////
+typedef struct {
+    uint64_t event_count;
+} example_queue_element_t;
+
+static bool IRAM_ATTR light_measurement_timer_handler(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data)
+{
+    BaseType_t high_task_awoken = pdFALSE;
+    QueueHandle_t queue = (QueueHandle_t)user_data;
+    // Retrieve count value and send to queue
+    example_queue_element_t ele = {
+        .event_count = edata->count_value
+    };
+    xQueueSendFromISR(queue, &ele, &high_task_awoken);
+    // return whether we need to yield at the end of ISR
+    return (high_task_awoken == pdTRUE);
+}
+
+static void light_measurement_timer_setup(QueueHandle_t queue) {
+    ESP_LOGI(TAG, "Create timer handle");
+    gptimer_handle_t gptimer = NULL;
+    gptimer_config_t timer_config = {
+        .clk_src = GPTIMER_CLK_SRC_DEFAULT,
+        .direction = GPTIMER_COUNT_UP,
+        .resolution_hz = 1000000, // 1MHz, 1 tick=1us
+    };
+    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));
+
+    gptimer_event_callbacks_t light_measurement_timer_callback = {
+        .on_alarm = light_measurement_timer_handler,
+    };
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(gptimer, &light_measurement_timer_callback, queue));
+
+    ESP_LOGI(TAG, "Enable timer");
+    ESP_ERROR_CHECK(gptimer_enable(gptimer));
+
+    ESP_LOGI(TAG, "Start timer, auto-reload at alarm event");
+    gptimer_alarm_config_t alarm_config = {
+        .reload_count = 0,
+        .alarm_count = 2000000, // period = 2s
+        .flags.auto_reload_on_alarm = true,
+    };
+    ESP_ERROR_CHECK(gptimer_set_alarm_action(gptimer, &alarm_config));
+    ESP_ERROR_CHECK(gptimer_start(gptimer));
+}
 
 //////////////////////////////////////////////////
 //
@@ -159,6 +203,28 @@ void app_main() {
 
     ESP_ERROR_CHECK(i2c_master_init());
     ESP_LOGI(TAG, "I2C initialized successfully");
+
+    example_queue_element_t ele;
+    QueueHandle_t queue = xQueueCreate(10, sizeof(example_queue_element_t));
+    if (!queue) {
+        ESP_LOGE(TAG, "Creating queue failed");
+        return;
+    }
+
+    light_measurement_timer_setup(queue);
+
+    int cnt = 0;
+    for (;;) {
+        printf("cnt: %d\n", cnt++);
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+        trigger_enable();
+        vTaskDelay(250 / portTICK_PERIOD_MS);
+        trigger_disable();
+
+        if (xQueueReceive(queue, &ele, pdMS_TO_TICKS(2000))) {
+            ESP_LOGI(TAG, "Timer reloaded, count=%llu", ele.event_count);
+        }
+    }
 
     // opt3004_enable_conversion();
 
@@ -175,6 +241,7 @@ void app_main() {
     // - how do I reset INT pin?
     //   - need to read config ready register
     // AC 8.3 ms, light sensor 800 ms
+    // may need to work on interrupt priority in future
 }
 
 
