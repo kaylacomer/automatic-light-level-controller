@@ -19,7 +19,10 @@
 static const char *TAG = "light-adjustment";
 
 #define GPIO_INPUT_IO_0     4
-#define GPIO_INPUT_PIN_SEL  (1ULL<<GPIO_INPUT_IO_0)
+#define ZERO_CROSSING_PIN_SEL  (1ULL<<GPIO_INPUT_IO_0)
+
+#define GPIO_INPUT_IO_1     5
+#define LTR303_INTR_PIN_SEL (1ULL<<GPIO_INPUT_IO_1)
 
 #define ESP_INTR_FLAG_DEFAULT 0
 
@@ -37,14 +40,22 @@ static const char *TAG = "light-adjustment";
 #define I2C_MASTER_RX_BUF_DISABLE   0                          /*!< I2C master doesn't need buffer */
 #define I2C_MASTER_TIMEOUT_MS       1000
 
-// #define OPT3004_SENSOR_ADDR                     0x44                    /*!< Slave address of the OPT3004 sensor when ADDR connected to GND */
-// #define OPT3004_RESULT_REG_ADDR                 0x00
-// #define OPT3004_CONFIG_REG_ADDR                 0x01
-// #define OPT3004_CONFIG_START_CONVERSION_BIT        9                    /*!< Bit to set for light sensor to start conversion process */
-// #define OPT3004_CONFIG_CONVERSION_READY_BIT        7                    /*!< Bit is 1 when a conversion is ready (ready to read result register) - reading resets bit and INT pin */
-// #define OPT3004_LOW_LIMIT_REG_ADDR              0x02
-// #define OPT3004_LOW_LIMIT_EOC_MODE              0b1100 0000 0000 0000   /*!< Low level register value for end-of-conversion mode (interrupt every time conversion is complete)*/
-// #define OPT3004_HIGH_LIMIT_REG_ADDR             0x03
+#define LTR303_SENSOR_ADDR          0x29
+#define LTR303_REG_CONTR            0x80  // operation mode control SW reset
+#define LTR303_REG_CONTR_MODE_BIT      0  // bit to toggle active mode
+#define LTR303_REG_MEAS_RATE        0x85  // measurement rate in active mode
+#define LTR303_REG_DATA_CH1_0       0x88  // CH1 data lower byte
+#define LTR303_REG_DATA_CH1_1       0x89  //           upper
+#define LTR303_REG_DATA_CH0_0       0x8A  // CH0 data lower byte
+#define LTR303_REG_DATA_CH0_1       0x8B  //           upper
+#define LTR303_REG_STATUS           0x8C  // new data status
+#define LTR303_REG_INTERRUPT        0x8F  // interrupt settings
+#define LTR303_REG_INTR_MODE_BIT       1  // bit to toggle interrupt mode (logic 0 indicates interrupt)
+#define LTR303_REG_THRES_UP_0       0x97  // upper limit of interrupt threshold value, lower byte - interrupt is called if measurement is outside of range
+#define LTR303_REG_THRES_UP_1       0x98  // upper                                   , upper
+#define LTR303_REG_THRES_LOW_0      0x98  // lower                                   , lower
+#define LTR303_REG_THRES_LOW_1      0x98  // lower                                   , upper
+#define LTR303_THRES_LOW_INTR_VAL   0xFF  // value for lower bits so that interrupt is called on every measurement
 
 //////////////////////////////////////////////////
 // Triac trigger (digital output)
@@ -68,22 +79,65 @@ void trigger_disable(void) {
 }
 
 //////////////////////////////////////////////////
-// OPT3004 light sensor (I2C)
+// LTR303 light sensor (I2C)
 //////////////////////////////////////////////////
-// static esp_err_t opt3004_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
-// {
-//     return i2c_master_write_read_device(I2C_MASTER_NUM, OPT3004_SENSOR_ADDR, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
-// }
+static esp_err_t ltr303_register_read(uint8_t reg_addr, uint8_t *data, size_t len)
+{
+    return i2c_master_write_read_device(I2C_MASTER_NUM, LTR303_SENSOR_ADDR, &reg_addr, 1, data, len, I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+}
 
-// static esp_err_t opt3004_register_write(uint8_t reg_addr, uint8_t *data)
-// {
-//     int ret;
-//     uint8_t write_buf[2] = {reg_addr, *data};
+static esp_err_t ltr303_register_write_byte(uint8_t reg_addr, uint8_t data)
+{
+    int ret;
+    uint8_t write_buf[2] = {reg_addr, data};
 
-//     ret = i2c_master_write_to_device(I2C_MASTER_NUM, OPT3004_SENSOR_ADDR, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
+    ret = i2c_master_write_to_device(I2C_MASTER_NUM, LTR303_SENSOR_ADDR, write_buf, sizeof(write_buf), I2C_MASTER_TIMEOUT_MS / portTICK_PERIOD_MS);
 
-//     return ret;
-// }
+    return ret;
+}
+
+static QueueHandle_t ltr303_meas_evt_queue = NULL;
+
+static void IRAM_ATTR ltr303_meas_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(ltr303_meas_evt_queue, &gpio_num, NULL);
+}
+
+static void ltr303_meas_task(void* arg)
+{
+    uint32_t io_num;
+    for(;;) {
+        if(xQueueReceive(ltr303_meas_evt_queue, &io_num, portMAX_DELAY)) {
+            ESP_LOGI(TAG, "new data ready to be read from ltr303");
+            ///// read data from ltr 303
+            ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT);  // turn on standby mode to save power
+        }
+    }
+}
+
+static void ltr303_setup() {
+    // enable interrupt mode
+    ltr303_register_write_byte(LTR303_REG_INTERRUPT, 1<<LTR303_REG_INTR_MODE_BIT);
+
+    // set lower threshold register to max value to trigger interrupt on every data read
+    ltr303_register_write_byte(LTR303_REG_THRES_LOW_0, LTR303_THRES_LOW_INTR_VAL);
+    ltr303_register_write_byte(LTR303_REG_THRES_LOW_1, LTR303_THRES_LOW_INTR_VAL);
+
+    // create interrupt on gpio pin connected to ltr303 INT
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_NEGEDGE;
+    io_conf.pin_bit_mask = LTR303_INTR_PIN_SEL;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
+
+    ltr303_meas_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    xTaskCreate(ltr303_meas_task, "ltr303_meas_task", 2048, NULL, 10, NULL);
+
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    gpio_isr_handler_add(GPIO_INPUT_IO_1, ltr303_meas_isr_handler, (void*) GPIO_INPUT_IO_1);
+}
 
 static esp_err_t i2c_master_init(void)
 {
@@ -103,11 +157,6 @@ static esp_err_t i2c_master_init(void)
     return i2c_driver_install(i2c_master_port, conf.mode, I2C_MASTER_RX_BUF_DISABLE, I2C_MASTER_TX_BUF_DISABLE, 0);
 }
 
-// static void opt3004_enable_conversion() {
-//     data[2] = 1<<OPT3004_CONFIG_START_CONVERSION_BIT;
-//     opt3004_register_write(OPT3004_CONFIG_REG_ADDR, data);
-// }
-
 //////////////////////////////////////////////////
 // Light sensor reading timer
 //////////////////////////////////////////////////
@@ -119,6 +168,7 @@ static void light_measurement_task(void* arg)
     for(;;) {
         if (xQueueReceive(light_measurement_alarm_queue, &user_data, pdMS_TO_TICKS(2000))) {
             ESP_LOGI(TAG, "enable light measurement conversion (read light level)");
+            ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT);
         }
     }
 }
@@ -231,23 +281,22 @@ static void phase_delay_timer_setup()
 //////////////////////////////////////////////////
 // Zero crossing detection (digital input)
 //////////////////////////////////////////////////
-static QueueHandle_t gpio_evt_queue = NULL;
+static QueueHandle_t zero_crossing_evt_queue = NULL;
 
-static void IRAM_ATTR gpio_isr_handler(void* arg)
+static void IRAM_ATTR zero_crossing_isr_handler(void* arg)
 {
     uint32_t gpio_num = (uint32_t) arg;
-    xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
+    xQueueSendFromISR(zero_crossing_evt_queue, &gpio_num, NULL);
 }
 
 static void zero_crossing_task(void* arg)
 {
     uint32_t io_num;
     for(;;) {
-        if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
+        if(xQueueReceive(zero_crossing_evt_queue, &io_num, portMAX_DELAY)) {
             ESP_LOGI(TAG, "zero crossing detected - start phase delay timer");
             ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));        // reset timer value to 0
             ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));                   // enable timer
-
         }
     }
 }
@@ -256,16 +305,16 @@ void zero_crossing_setup(void)
 {
     gpio_config_t io_conf = {};
     io_conf.intr_type = GPIO_INTR_POSEDGE;
-    io_conf.pin_bit_mask = GPIO_INPUT_PIN_SEL;
+    io_conf.pin_bit_mask = ZERO_CROSSING_PIN_SEL;
     io_conf.mode = GPIO_MODE_INPUT;
     io_conf.pull_up_en = 1;
     gpio_config(&io_conf);
 
-    gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
+    zero_crossing_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     xTaskCreate(zero_crossing_task, "zero_crossing_task", 2048, NULL, 10, NULL);
 
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
-    gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0);
+    gpio_isr_handler_add(GPIO_INPUT_IO_0, zero_crossing_isr_handler, (void*) GPIO_INPUT_IO_0);
 }
 
 //////////////////////////////////////////////////
@@ -280,6 +329,8 @@ void app_main() {
 
     light_measurement_timer_setup();
     phase_delay_timer_setup();
+
+    ltr303_setup();
 
     // int cnt = 0;
     for (;;) {
@@ -306,6 +357,7 @@ void app_main() {
     //   - need to read config ready register
     // AC 8.3 ms, light sensor 800 ms
     // may need to work on interrupt priority in future
+    // can change light sensor gain to smaller range of lux
 }
 
 
