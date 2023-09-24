@@ -78,12 +78,12 @@ static void IRAM_ATTR gpio_isr_handler(void* arg)
     xQueueSendFromISR(gpio_evt_queue, &gpio_num, NULL);
 }
 
-static void gpio_task_example(void* arg)
+static void zero_crossing_task(void* arg)
 {
     uint32_t io_num;
     for(;;) {
         if(xQueueReceive(gpio_evt_queue, &io_num, portMAX_DELAY)) {
-            printf("GPIO[%"PRIu32"] intr, val: %d\n", io_num, gpio_get_level(io_num));
+            ESP_LOGI(TAG, "zero crossing detected");
             ////////////////////////////////////////////////// set alarm
         }
     }
@@ -99,7 +99,7 @@ void zero_crossing_setup(void)
     gpio_config(&io_conf);
 
     gpio_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(gpio_task_example, "gpio_task_example", 2048, NULL, 10, NULL);
+    xTaskCreate(zero_crossing_task, "zero_crossing_task", 2048, NULL, 10, NULL);
 
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
     gpio_isr_handler_add(GPIO_INPUT_IO_0, gpio_isr_handler, (void*) GPIO_INPUT_IO_0);
@@ -149,25 +149,36 @@ static esp_err_t i2c_master_init(void)
 //////////////////////////////////////////////////
 // Light sensor reading timer
 //////////////////////////////////////////////////
-typedef struct {
-    uint64_t event_count;
-} example_queue_element_t;
+static QueueHandle_t light_measurement_alarm_queue = NULL;
+
+static void light_measurement_task(void* arg)
+{
+    uint32_t user_data;
+    for(;;) {
+        if (xQueueReceive(light_measurement_alarm_queue, &user_data, pdMS_TO_TICKS(2000))) {
+            ESP_LOGI(TAG, "enable light measurement conversion (read light level)");
+        }
+    }
+}
 
 static bool IRAM_ATTR light_measurement_timer_handler(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data)
 {
     BaseType_t high_task_awoken = pdFALSE;
-    QueueHandle_t queue = (QueueHandle_t)user_data;
-    // Retrieve count value and send to queue
-    example_queue_element_t ele = {
-        .event_count = edata->count_value
-    };
-    xQueueSendFromISR(queue, &ele, &high_task_awoken);
+    xQueueSendFromISR(light_measurement_alarm_queue, &user_data, &high_task_awoken);
+
     // return whether we need to yield at the end of ISR
     return (high_task_awoken == pdTRUE);
 }
 
-static void light_measurement_timer_setup(QueueHandle_t queue) {
+static void light_measurement_timer_setup() {
     ESP_LOGI(TAG, "Create timer handle");
+    light_measurement_alarm_queue = xQueueCreate(10, sizeof(light_measurement_alarm_queue));
+    if (!light_measurement_alarm_queue) {
+        ESP_LOGE(TAG, "Creating queue failed");
+        return;
+    }
+    xTaskCreate(light_measurement_task, "light_measurement_task", 2048, NULL, 10, NULL);
+
     gptimer_handle_t gptimer = NULL;
     gptimer_config_t timer_config = {
         .clk_src = GPTIMER_CLK_SRC_DEFAULT,
@@ -179,7 +190,7 @@ static void light_measurement_timer_setup(QueueHandle_t queue) {
     gptimer_event_callbacks_t light_measurement_timer_callback = {
         .on_alarm = light_measurement_timer_handler,
     };
-    ESP_ERROR_CHECK(gptimer_register_event_callbacks(gptimer, &light_measurement_timer_callback, queue));
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(gptimer, &light_measurement_timer_callback, light_measurement_alarm_queue));
 
     ESP_LOGI(TAG, "Enable timer");
     ESP_ERROR_CHECK(gptimer_enable(gptimer));
@@ -187,7 +198,7 @@ static void light_measurement_timer_setup(QueueHandle_t queue) {
     ESP_LOGI(TAG, "Start timer, auto-reload at alarm event");
     gptimer_alarm_config_t alarm_config = {
         .reload_count = 0,
-        .alarm_count = 2000000, // period = 2s
+        .alarm_count = 5000000, // period = 5s
         .flags.auto_reload_on_alarm = true,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(gptimer, &alarm_config));
@@ -204,26 +215,15 @@ void app_main() {
     ESP_ERROR_CHECK(i2c_master_init());
     ESP_LOGI(TAG, "I2C initialized successfully");
 
-    example_queue_element_t ele;
-    QueueHandle_t queue = xQueueCreate(10, sizeof(example_queue_element_t));
-    if (!queue) {
-        ESP_LOGE(TAG, "Creating queue failed");
-        return;
-    }
+    light_measurement_timer_setup();
 
-    light_measurement_timer_setup(queue);
-
-    int cnt = 0;
+    // int cnt = 0;
     for (;;) {
-        printf("cnt: %d\n", cnt++);
+        // printf("cnt: %d\n", cnt++);
         vTaskDelay(500 / portTICK_PERIOD_MS);
         trigger_enable();
         vTaskDelay(250 / portTICK_PERIOD_MS);
         trigger_disable();
-
-        if (xQueueReceive(queue, &ele, pdMS_TO_TICKS(2000))) {
-            ESP_LOGI(TAG, "Timer reloaded, count=%llu", ele.event_count);
-        }
     }
 
     // opt3004_enable_conversion();
