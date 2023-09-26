@@ -4,7 +4,9 @@
             "name": "Mac",
             "includePath": [
                 "${workspaceFolder}/**",
-                "/Users/kmcomer/esp/esp-idf/components/**"
+                "/Users/kmcomer/esp/esp-idf/components/**",
+                "/Users/kmcomer/esp/esp-idf/components/newlib/platform_include",
+                "/Users/kmcomer/esp/esp-idf/components/newlib/platform_include"
             ],
             "defines": [],
             "macFrameworkPath": [
