@@ -18,16 +18,16 @@
 //////////////////////////////////////////////////
 static const char *TAG = "light-adjustment";
 
-#define GPIO_INPUT_IO_0     4
-#define ZERO_CROSSING_PIN_SEL  (1ULL<<GPIO_INPUT_IO_0)
-
-#define GPIO_INPUT_IO_1     5
-#define LTR303_INTR_PIN_SEL (1ULL<<GPIO_INPUT_IO_1)
-
 #define ESP_INTR_FLAG_DEFAULT 0
 
-#define GPIO_OUTPUT_IO_0    18
-#define GPIO_OUTPUT_PIN_SEL  (1ULL<<GPIO_OUTPUT_IO_0)
+#define GPIO_INPUT_ZERO_CROSS_PIN     4
+#define ZERO_CROSSING_PIN_SEL  (1ULL<<GPIO_INPUT_ZERO_CROSS_PIN)
+
+#define GPIO_INPUT_LTR303_INTR_PIN     5
+#define LTR303_INTR_PIN_SEL (1ULL<<GPIO_INPUT_LTR303_INTR_PIN)
+
+#define GPIO_OUTPUT_TRIAC_TRIGGER_PIN    18
+#define GPIO_OUTPUT_TRIAC_TRIGGER_PIN_SEL  (1ULL<<GPIO_OUTPUT_TRIAC_TRIGGER_PIN)
 
 #define ON  1
 #define OFF 0
@@ -71,11 +71,11 @@ void trigger_setup(void) {
 }
 
 void trigger_enable(void) {
-    gpio_set_level(GPIO_OUTPUT_IO_0, ON);
+    gpio_set_level(GPIO_OUTPUT_TRIAC_TRIGGER_PIN, ON);
 }
 
 void trigger_disable(void) {
-    gpio_set_level(GPIO_OUTPUT_IO_0, OFF);
+    gpio_set_level(GPIO_OUTPUT_TRIAC_TRIGGER_PIN, OFF);
 }
 
 //////////////////////////////////////////////////
@@ -135,8 +135,7 @@ static void ltr303_setup() {
     ltr303_meas_evt_queue = xQueueCreate(10, sizeof(uint32_t));
     xTaskCreate(ltr303_meas_task, "ltr303_meas_task", 2048, NULL, 10, NULL);
 
-    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
-    gpio_isr_handler_add(GPIO_INPUT_IO_1, ltr303_meas_isr_handler, (void*) GPIO_INPUT_IO_1);
+    gpio_isr_handler_add(GPIO_INPUT_LTR303_INTR_PIN, ltr303_meas_isr_handler, (void*) GPIO_INPUT_LTR303_INTR_PIN);
 }
 
 static esp_err_t i2c_master_init(void)
@@ -314,7 +313,7 @@ void zero_crossing_setup(void)
     xTaskCreate(zero_crossing_task, "zero_crossing_task", 2048, NULL, 10, NULL);
 
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
-    gpio_isr_handler_add(GPIO_INPUT_IO_0, zero_crossing_isr_handler, (void*) GPIO_INPUT_IO_0);
+    gpio_isr_handler_add(GPIO_INPUT_ZERO_CROSS_PIN, zero_crossing_isr_handler, (void*) GPIO_INPUT_ZERO_CROSS_PIN);
 }
 
 //////////////////////////////////////////////////
@@ -341,30 +340,28 @@ void app_main() {
         trigger_disable();
     }
 
-    // opt3004_enable_conversion();
-
 
     // enable timers
     // - timer every x ms to update light sensor reading
     //   - compare actual light with target light
     //   - if not within tolerance, update phase delay
-    // - timer every 8.3 ms to simulate zero cross detection
+    // - 120 hz square wave to simulate zero cross detection
     //   - enable phase delay timer and interrupt
     // - phase delay timer (enabled by zero cross)
     //   - send pulse to triac
-    // interrupt on opt3004 INT pin - tells when to read value (interrupt on LOW / negedge)
+    // interrupt on ltr303 INT pin - tells when to read value (interrupt on LOW / negedge)
     // - how do I reset INT pin?
-    //   - need to read config ready register
-    // AC 8.3 ms, light sensor 800 ms
+    //   - auto reset by reading register
+    // AC 8.3 ms, light sensor 100 ms integration
     // may need to work on interrupt priority in future
     // can change light sensor gain to smaller range of lux
 }
 
 
-// GPIO example:                        https://github.com/espressif/esp-idf/blob/v5.1/examples/peripherals/gpio/generic_gpio/README.md
+// GPIO example:                        https://github.com/espressif/esp-idf/blob/v5.1/examples/peripherals/gpio/generic_gpio/
 // GPIO documentation:                  https://docs.espressif.com/projects/esp-idf/en/v4.3/esp32/api-reference/peripherals/gpio.html
 
-// I2C example:                         https://github.com/espressif/esp-idf/blob/v5.1/examples/peripherals/i2c/i2c_simple/README.md
+// I2C example:                         https://github.com/espressif/esp-idf/blob/v5.1/examples/peripherals/i2c/i2c_simple/
 // I2C documentation:                   https://docs.espressif.com/projects/esp-idf/en/v4.3/esp32/api-reference/peripherals/i2c.html
 
 // General purpose timer example:       https://github.com/espressif/esp-idf/tree/v5.1/examples/peripherals/timer_group/gptimer
