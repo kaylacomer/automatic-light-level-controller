@@ -268,7 +268,7 @@ static void phase_delay_timer_setup()
     ESP_ERROR_CHECK(gptimer_enable(phase_delay_timer));
 
     gptimer_alarm_config_t alarm_config = {
-        .alarm_count = 10, // period = 
+        .alarm_count = 2000, // period = 2 ms
         .flags.auto_reload_on_alarm = false,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(phase_delay_timer, &alarm_config));
