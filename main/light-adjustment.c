@@ -227,7 +227,7 @@ static void phase_delay_task(void* arg)
     uint32_t user_data;
     for(;;) {
         if (xQueueReceive(phase_delay_alarm_queue, &user_data, pdMS_TO_TICKS(2000))) {
-            ESP_LOGI(TAG, "trigger triac after phase delay");
+            trigger_enable();
         }
     }
 }
@@ -256,7 +256,7 @@ static void phase_delay_timer_setup()
         .clk_src = GPTIMER_CLK_SRC_DEFAULT,
         .direction = GPTIMER_COUNT_UP,
         .resolution_hz = 1000000, // 1MHz, 1 tick=1us
-        .intr_priority = 3,
+        // .intr_priority = 3,
     };
     ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &phase_delay_timer));
 
@@ -265,11 +265,10 @@ static void phase_delay_timer_setup()
     };
     ESP_ERROR_CHECK(gptimer_register_event_callbacks(phase_delay_timer, &phase_delay_timer_callback, phase_delay_alarm_queue));
 
-    ESP_LOGI(TAG, "Enable phase delay timer");
     ESP_ERROR_CHECK(gptimer_enable(phase_delay_timer));
 
     gptimer_alarm_config_t alarm_config = {
-        .alarm_count = 1000, // period = 
+        .alarm_count = 10, // period = 
         .flags.auto_reload_on_alarm = false,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(phase_delay_timer, &alarm_config));
@@ -294,13 +293,12 @@ static void zero_crossing_task(void* arg)
     uint32_t io_num;
     for(;;) {
         if(xQueueReceive(zero_crossing_evt_queue, &io_num, portMAX_DELAY)) {
-            ESP_LOGI(TAG, "zero crossing detected - start phase delay timer");
-            ESP_LOGI(TAG, "Start phase delay timer, no auto-reload");
+            trigger_disable();
             
-            // ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
-            // ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
-
-            ESP_LOGI(TAG, "Started timer");
+            ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
+            ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
+            ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
+            vTaskDelay(1 / portTICK_PERIOD_MS);
         }
     }
 }
@@ -333,38 +331,9 @@ void app_main() {
     light_measurement_timer_setup();
     phase_delay_timer_setup();
 
-    for (;;) {
-        ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
-        ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
-        ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-    }
-    // taskENTER_CRITICAL(&phase_delay_timer);
-    // ESP_ERROR_CHECK(gptimer_enable(phase_delay_timer));
-    // ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
-    // ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
-    // taskEXIT_CRITICAL(&phase_delay_timer);
-
-
-    // zero_crossing_setup();
-
-        //     ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
-        // ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
-        // vTaskDelay(500 / portTICK_PERIOD_MS);
-        // ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
-
-    
+    zero_crossing_setup();
 
     // ltr303_setup();
-
-    // int cnt = 0;
-    // for (;;) {
-    //     // printf("cnt: %d\n", cnt++);
-    //     // vTaskDelay(500 / portTICK_PERIOD_MS);
-    //     // trigger_enable();
-    //     // vTaskDelay(250 / portTICK_PERIOD_MS);
-    //     // trigger_disable();
-    // }
 
 
     // enable timers
