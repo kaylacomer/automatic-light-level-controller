@@ -181,6 +181,7 @@ static bool IRAM_ATTR light_measurement_timer_handler(gptimer_handle_t timer, co
     return (high_task_awoken == pdTRUE);
 }
 
+gptimer_handle_t light_measurement_timer = NULL;
 static void light_measurement_timer_setup() {
     ESP_LOGI(TAG, "Create light measurement timer handle");
     light_measurement_alarm_queue = xQueueCreate(10, sizeof(light_measurement_alarm_queue));
@@ -190,21 +191,20 @@ static void light_measurement_timer_setup() {
     }
     xTaskCreate(light_measurement_task, "light_measurement_task", 2048, NULL, 10, NULL);
 
-    gptimer_handle_t gptimer = NULL;
     gptimer_config_t timer_config = {
         .clk_src = GPTIMER_CLK_SRC_DEFAULT,
         .direction = GPTIMER_COUNT_UP,
         .resolution_hz = 1000000, // 1MHz, 1 tick=1us
     };
-    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &gptimer));
+    ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &light_measurement_timer));
 
     gptimer_event_callbacks_t light_measurement_timer_callback = {
         .on_alarm = light_measurement_timer_handler,
     };
-    ESP_ERROR_CHECK(gptimer_register_event_callbacks(gptimer, &light_measurement_timer_callback, light_measurement_alarm_queue));
+    ESP_ERROR_CHECK(gptimer_register_event_callbacks(light_measurement_timer, &light_measurement_timer_callback, light_measurement_alarm_queue));
 
     ESP_LOGI(TAG, "Enable light measurement timer");
-    ESP_ERROR_CHECK(gptimer_enable(gptimer));
+    ESP_ERROR_CHECK(gptimer_enable(light_measurement_timer));
 
     ESP_LOGI(TAG, "Start light measurement timer, auto-reload at alarm event");
     gptimer_alarm_config_t alarm_config = {
@@ -212,8 +212,8 @@ static void light_measurement_timer_setup() {
         .alarm_count = 1000000, // period = 1s
         .flags.auto_reload_on_alarm = true,
     };
-    ESP_ERROR_CHECK(gptimer_set_alarm_action(gptimer, &alarm_config));
-    ESP_ERROR_CHECK(gptimer_start(gptimer));
+    ESP_ERROR_CHECK(gptimer_set_alarm_action(light_measurement_timer, &alarm_config));
+    ESP_ERROR_CHECK(gptimer_start(light_measurement_timer));
 }
 
 //////////////////////////////////////////////////
@@ -224,8 +224,6 @@ gptimer_handle_t phase_delay_timer = NULL;
 
 static void phase_delay_task(void* arg)
 {
-    ESP_LOGI(TAG, "in phase_delay_task");
-
     uint32_t user_data;
     for(;;) {
         if (xQueueReceive(phase_delay_alarm_queue, &user_data, pdMS_TO_TICKS(2000))) {
@@ -236,17 +234,12 @@ static void phase_delay_task(void* arg)
 
 static bool IRAM_ATTR phase_delay_timer_handler(gptimer_handle_t timer, const gptimer_alarm_event_data_t *edata, void *user_data)
 {
-    ESP_LOGI(TAG, "in phase delay timer handler");
-    BaseType_t high_task_awoken = pdTRUE;
-
-    ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
-    
-    // ESP_ERROR_CHECK(gptimer_disable(phase_delay_timer));
+    BaseType_t high_task_awoken = pdFALSE;
     
     xQueueSendFromISR(phase_delay_alarm_queue, &user_data, &high_task_awoken);
 
     // return whether we need to yield at the end of ISR
-    return (high_task_awoken);
+    return (high_task_awoken == pdTRUE);
 }
 
 static void phase_delay_timer_setup()
@@ -276,15 +269,11 @@ static void phase_delay_timer_setup()
     ESP_ERROR_CHECK(gptimer_enable(phase_delay_timer));
 
     gptimer_alarm_config_t alarm_config = {
-        .alarm_count = 10000, // period = 0.01s
+        .alarm_count = 1000, // period = 
         .flags.auto_reload_on_alarm = false,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(phase_delay_timer, &alarm_config));
-}
 
-static void phase_delay_timer_start() {
-    ESP_LOGI(TAG, "Start phase delay timer, no auto-reload");
-    
     ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
     ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
 }
@@ -306,7 +295,12 @@ static void zero_crossing_task(void* arg)
     for(;;) {
         if(xQueueReceive(zero_crossing_evt_queue, &io_num, portMAX_DELAY)) {
             ESP_LOGI(TAG, "zero crossing detected - start phase delay timer");
-            phase_delay_timer_start();
+            ESP_LOGI(TAG, "Start phase delay timer, no auto-reload");
+            
+            // ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
+            // ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
+
+            ESP_LOGI(TAG, "Started timer");
         }
     }
 }
@@ -317,7 +311,7 @@ void zero_crossing_setup(void)
     io_conf.intr_type = GPIO_INTR_ANYEDGE;
     io_conf.pin_bit_mask = ZERO_CROSSING_PIN_SEL;
     io_conf.mode = GPIO_MODE_INPUT;
-    // io_conf.pull_up_en = 1;
+    io_conf.pull_up_en = 1;
     gpio_config(&io_conf);
 
     zero_crossing_evt_queue = xQueueCreate(10, sizeof(uint32_t));
@@ -339,18 +333,38 @@ void app_main() {
     light_measurement_timer_setup();
     phase_delay_timer_setup();
 
-    zero_crossing_setup();
+    for (;;) {
+        ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
+        ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
+        ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
+        vTaskDelay(500 / portTICK_PERIOD_MS);
+    }
+    // taskENTER_CRITICAL(&phase_delay_timer);
+    // ESP_ERROR_CHECK(gptimer_enable(phase_delay_timer));
+    // ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
+    // ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
+    // taskEXIT_CRITICAL(&phase_delay_timer);
+
+
+    // zero_crossing_setup();
+
+        //     ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
+        // ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
+        // vTaskDelay(500 / portTICK_PERIOD_MS);
+        // ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
+
+    
 
     // ltr303_setup();
 
     // int cnt = 0;
-    for (;;) {
-        // printf("cnt: %d\n", cnt++);
-        vTaskDelay(500 / portTICK_PERIOD_MS);
-        trigger_enable();
-        vTaskDelay(250 / portTICK_PERIOD_MS);
-        trigger_disable();
-    }
+    // for (;;) {
+    //     // printf("cnt: %d\n", cnt++);
+    //     // vTaskDelay(500 / portTICK_PERIOD_MS);
+    //     // trigger_enable();
+    //     // vTaskDelay(250 / portTICK_PERIOD_MS);
+    //     // trigger_disable();
+    // }
 
 
     // enable timers
