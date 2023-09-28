@@ -250,8 +250,8 @@ static void zero_crossing_task(void* arg)
                 phase_delay_timer_on = true;
                 ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
                 ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
-                ESP_LOGI(TAG, "zero crossing detected - phase delay timer started, %ld", xTaskGetTickCount());
-                vTaskDelay(1);
+                // ESP_LOGI(TAG, "zero crossing detected - phase delay timer started, %ld", xTaskGetTickCount());
+                // vTaskDelay(1);
 
                 // zero_crossing_detected = true;
                 // gpio_isr_handler_remove(GPIO_INPUT_ZERO_CROSS_PIN);
@@ -286,7 +286,7 @@ static void phase_delay_task(void* arg)
     uint32_t user_data;
     for(;;) {
         if (xQueueReceive(phase_delay_alarm_queue, &user_data, TICK_WAIT_PERIOD)) {
-            ESP_LOGI(TAG, "phase delay alarm task, %ld", xTaskGetTickCount());
+            // ESP_LOGI(TAG, "phase delay alarm task, %ld", xTaskGetTickCount());
             trigger_enable();
             // zero_crossing_detected = false;
             // gpio_isr_handler_add(GPIO_INPUT_ZERO_CROSS_PIN, zero_crossing_isr_handler, (void*) GPIO_INPUT_ZERO_CROSS_PIN);
@@ -318,7 +318,7 @@ static void phase_delay_timer_setup()
         .clk_src = GPTIMER_CLK_SRC_DEFAULT,
         .direction = GPTIMER_COUNT_UP,
         .resolution_hz = 1000000, // 1MHz, 1 tick=1us
-        // .intr_priority = 3,
+        .intr_priority = 3,
     };
     ESP_ERROR_CHECK(gptimer_new_timer(&timer_config, &phase_delay_timer));
 
@@ -330,8 +330,8 @@ static void phase_delay_timer_setup()
     ESP_ERROR_CHECK(gptimer_enable(phase_delay_timer));
 
     gptimer_alarm_config_t alarm_config = {
-        // .alarm_count = 2000, // period = 2 ms
-        .alarm_count = 1000000, // 1 s
+        .alarm_count = 2000, // period = 2 ms
+        // .alarm_count = 1000000, // 1 s
         .flags.auto_reload_on_alarm = false,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(phase_delay_timer, &alarm_config));
@@ -343,10 +343,10 @@ static void phase_delay_timer_setup()
 void app_main() {
     trigger_setup();
 
-    ESP_ERROR_CHECK(i2c_master_init());
-    ESP_LOGI(TAG, "I2C initialized successfully");
+    // ESP_ERROR_CHECK(i2c_master_init());
+    // ESP_LOGI(TAG, "I2C initialized successfully");
 
-    light_measurement_timer_setup();
+    // light_measurement_timer_setup();
     phase_delay_timer_setup();
 
     zero_crossing_setup();
