@@ -16,6 +16,11 @@
 //////////////////////////////////////////////////
 // Pin mapping and global constants
 //////////////////////////////////////////////////
+#define CONFIG_FREERTOS_HZ 2000
+#define configTICK_RATE_HZ CONFIG_FREERTOS_HZ
+#define portTICK_PERIOD_MS 0.5 // ( ( TickType_t ) 1000 / configTICK_RATE_HZ )
+#define TICK_WAIT_PERIOD 5
+
 static const char *TAG = "light-adjustment";
 
 #define ESP_INTR_FLAG_DEFAULT 0
@@ -56,6 +61,10 @@ static const char *TAG = "light-adjustment";
 #define LTR303_REG_THRES_LOW_0      0x98  // lower                                   , lower
 #define LTR303_REG_THRES_LOW_1      0x98  // lower                                   , upper
 #define LTR303_THRES_LOW_INTR_VAL   0xFF  // value for lower bits so that interrupt is called on every measurement
+
+bool phase_delay_timer_on = false;
+// bool zero_crossing_detected = false;
+gptimer_handle_t phase_delay_timer = NULL;
 
 //////////////////////////////////////////////////
 // Triac trigger (digital output)
@@ -108,7 +117,7 @@ static void ltr303_meas_task(void* arg)
 {
     uint32_t io_num;
     for(;;) {
-        if(xQueueReceive(ltr303_meas_evt_queue, &io_num, portMAX_DELAY)) {
+        if(xQueueReceive(ltr303_meas_evt_queue, &io_num, TICK_WAIT_PERIOD)) {
             ESP_LOGI(TAG, "new data ready to be read from ltr303");
             ///// read data from ltr 303
             ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT);  // turn on standby mode to save power
@@ -165,7 +174,7 @@ static void light_measurement_task(void* arg)
 {
     uint32_t user_data;
     for(;;) {
-        if (xQueueReceive(light_measurement_alarm_queue, &user_data, pdMS_TO_TICKS(2000))) {
+        if (xQueueReceive(light_measurement_alarm_queue, &user_data, TICK_WAIT_PERIOD)) {
             ESP_LOGI(TAG, "enable light measurement conversion (read light level)");
             ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT);
         }
@@ -209,7 +218,7 @@ static void light_measurement_timer_setup() {
     ESP_LOGI(TAG, "Start light measurement timer, auto-reload at alarm event");
     gptimer_alarm_config_t alarm_config = {
         .reload_count = 0,
-        .alarm_count = 1000000, // period = 1s
+        .alarm_count = 5000000, // period = 5s
         .flags.auto_reload_on_alarm = true,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(light_measurement_timer, &alarm_config));
@@ -217,17 +226,70 @@ static void light_measurement_timer_setup() {
 }
 
 //////////////////////////////////////////////////
+// Zero crossing detection (digital input)
+//////////////////////////////////////////////////
+static QueueHandle_t zero_crossing_evt_queue = NULL;
+
+static void IRAM_ATTR zero_crossing_isr_handler(void* arg)
+{
+    uint32_t gpio_num = (uint32_t) arg;
+    xQueueSendFromISR(zero_crossing_evt_queue, &gpio_num, NULL);
+}
+
+static void zero_crossing_task(void* arg)
+{
+    uint32_t io_num;
+    for(;;) {
+        if(xQueueReceive(zero_crossing_evt_queue, &io_num, TICK_WAIT_PERIOD)) {
+            // if (!zero_crossing_detected) {
+                trigger_disable();
+
+                if (phase_delay_timer_on) {
+                    ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
+                }
+                phase_delay_timer_on = true;
+                ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
+                ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
+                ESP_LOGI(TAG, "zero crossing detected - phase delay timer started, %ld", xTaskGetTickCount());
+                vTaskDelay(1);
+
+                // zero_crossing_detected = true;
+                // gpio_isr_handler_remove(GPIO_INPUT_ZERO_CROSS_PIN);
+            // }
+        }
+    }
+}
+
+void zero_crossing_setup(void)
+{
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_POSEDGE;
+    io_conf.pin_bit_mask = ZERO_CROSSING_PIN_SEL;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_up_en = 1;
+    gpio_config(&io_conf);
+
+    zero_crossing_evt_queue = xQueueCreate(1, sizeof(uint32_t));
+    xTaskCreate(zero_crossing_task, "zero_crossing_task", 2048, NULL, 10, NULL);
+
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    gpio_isr_handler_add(GPIO_INPUT_ZERO_CROSS_PIN, zero_crossing_isr_handler, (void*) GPIO_INPUT_ZERO_CROSS_PIN);
+}
+
+//////////////////////////////////////////////////
 // Triac trigger after phase delay timer
 //////////////////////////////////////////////////
 static QueueHandle_t phase_delay_alarm_queue = NULL;
-gptimer_handle_t phase_delay_timer = NULL;
 
 static void phase_delay_task(void* arg)
 {
     uint32_t user_data;
     for(;;) {
-        if (xQueueReceive(phase_delay_alarm_queue, &user_data, pdMS_TO_TICKS(2000))) {
+        if (xQueueReceive(phase_delay_alarm_queue, &user_data, TICK_WAIT_PERIOD)) {
+            ESP_LOGI(TAG, "phase delay alarm task, %ld", xTaskGetTickCount());
             trigger_enable();
+            // zero_crossing_detected = false;
+            // gpio_isr_handler_add(GPIO_INPUT_ZERO_CROSS_PIN, zero_crossing_isr_handler, (void*) GPIO_INPUT_ZERO_CROSS_PIN);
         }
     }
 }
@@ -245,7 +307,7 @@ static bool IRAM_ATTR phase_delay_timer_handler(gptimer_handle_t timer, const gp
 static void phase_delay_timer_setup()
 {
     ESP_LOGI(TAG, "Create phase delay timer handler");
-    phase_delay_alarm_queue = xQueueCreate(10, sizeof(phase_delay_alarm_queue));
+    phase_delay_alarm_queue = xQueueCreate(1, sizeof(phase_delay_alarm_queue));
     if (!phase_delay_alarm_queue) {
         ESP_LOGE(TAG, "Creating phase delay alarm failed");
         return;
@@ -268,55 +330,11 @@ static void phase_delay_timer_setup()
     ESP_ERROR_CHECK(gptimer_enable(phase_delay_timer));
 
     gptimer_alarm_config_t alarm_config = {
-        .alarm_count = 2000, // period = 2 ms
+        // .alarm_count = 2000, // period = 2 ms
+        .alarm_count = 1000000, // 1 s
         .flags.auto_reload_on_alarm = false,
     };
     ESP_ERROR_CHECK(gptimer_set_alarm_action(phase_delay_timer, &alarm_config));
-
-    ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
-    ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
-}
-
-//////////////////////////////////////////////////
-// Zero crossing detection (digital input)
-//////////////////////////////////////////////////
-static QueueHandle_t zero_crossing_evt_queue = NULL;
-
-static void IRAM_ATTR zero_crossing_isr_handler(void* arg)
-{
-    uint32_t gpio_num = (uint32_t) arg;
-    xQueueSendFromISR(zero_crossing_evt_queue, &gpio_num, NULL);
-}
-
-static void zero_crossing_task(void* arg)
-{
-    uint32_t io_num;
-    for(;;) {
-        if(xQueueReceive(zero_crossing_evt_queue, &io_num, portMAX_DELAY)) {
-            trigger_disable();
-            
-            ESP_ERROR_CHECK(gptimer_stop(phase_delay_timer));
-            ESP_ERROR_CHECK(gptimer_set_raw_count(phase_delay_timer, 0));
-            ESP_ERROR_CHECK(gptimer_start(phase_delay_timer));
-            vTaskDelay(1 / portTICK_PERIOD_MS);
-        }
-    }
-}
-
-void zero_crossing_setup(void)
-{
-    gpio_config_t io_conf = {};
-    io_conf.intr_type = GPIO_INTR_ANYEDGE;
-    io_conf.pin_bit_mask = ZERO_CROSSING_PIN_SEL;
-    io_conf.mode = GPIO_MODE_INPUT;
-    io_conf.pull_up_en = 1;
-    gpio_config(&io_conf);
-
-    zero_crossing_evt_queue = xQueueCreate(10, sizeof(uint32_t));
-    xTaskCreate(zero_crossing_task, "zero_crossing_task", 2048, NULL, 10, NULL);
-
-    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
-    gpio_isr_handler_add(GPIO_INPUT_ZERO_CROSS_PIN, zero_crossing_isr_handler, (void*) GPIO_INPUT_ZERO_CROSS_PIN);
 }
 
 //////////////////////////////////////////////////
