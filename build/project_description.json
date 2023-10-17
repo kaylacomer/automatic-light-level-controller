@@ -1,7 +1,7 @@
 {
     "version":            "1",
     "project_name":       "hello_world",
-    "project_version":    "8a4ab3b-dirty",
+    "project_version":    "bcacb3d-dirty",
     "project_path":       "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller",
     "idf_path":           "/Users/kmcomer/esp/esp-idf",
     "build_dir":          "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller/build",

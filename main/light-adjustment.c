@@ -50,6 +50,7 @@ static const char *TAG = "light-adjustment";
 #define LTR303_REG_CONTR            0x80  // operation mode control SW reset
 #define LTR303_REG_CONTR_MODE_BIT      0  // bit to toggle active mode
 #define LTR303_REG_CONTR_4XGAIN_BIT    3  // bit to enable 4X gain -> measurement ranges 0.25 to 16 klux
+#define LTR303_REG_CONTR_2XGAIN_BIT    2  // bit to enable 2X gain -> measurement ranges 0.5 to 32 klux
 #define LTR303_REG_MEAS_RATE        0x85  // measurement rate in active mode
 #define LTR303_REG_MEAS_RATE_BIT       2  // set measurement rate to 2 s
 #define LTR303_REG_DATA_CH1_0       0x88  // CH1 data lower byte
@@ -73,7 +74,8 @@ gptimer_alarm_config_t phase_delay_timer_alarm_config = {
     .flags.auto_reload_on_alarm = false,
 };
 
-uint16_t light_meas = 0;
+uint16_t light_meas_lux = 0;
+uint16_t target_val_lux = 0;
 
 bool update_alarm_val = true;
 
@@ -124,9 +126,6 @@ static void ltr303_setup() {
     ltr303_register_write_byte(LTR303_REG_THRES_LOW_0, LTR303_THRES_LOW_INTR_VAL);
     ltr303_register_write_byte(LTR303_REG_THRES_LOW_1, LTR303_THRES_LOW_INTR_VAL);
 
-    // enable interrupt mode
-    ltr303_register_write_byte(LTR303_REG_INTERRUPT, 1<<LTR303_REG_INTR_MODE_BIT);
-
     // set measurement rate to every 2 seconds
     ltr303_register_write_byte(LTR303_REG_MEAS_RATE, 1<<LTR303_REG_MEAS_RATE_BIT);
     
@@ -134,7 +133,7 @@ static void ltr303_setup() {
     ESP_LOGI(TAG, "meas rate: %d", LTR303_REG_MEAS_RATE);
 
     // set measurement mode to active
-    ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT | 1<<LTR303_REG_CONTR_4XGAIN_BIT);
+    ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT | 1<<LTR303_REG_CONTR_2XGAIN_BIT);
 }
 
 static esp_err_t i2c_master_init(void)
@@ -232,22 +231,64 @@ void app_main() {
 
     zero_crossing_setup();
 
+    target_val_lux = 15000;
+    uint16_t tolerance_lux = 100;
+    uint8_t delay_seconds = 3;
+
     while(1) {
-        vTaskDelay(300); // 3 seconds
-        phase_delay_time += 1000;
-        update_alarm_val = true;
-        ESP_LOGI(TAG, "phase delay time: %d", phase_delay_time);
+        vTaskDelay(delay_seconds * 100);
 
         uint8_t visible_and_infrared[2];
         ltr303_register_read(LTR303_REG_DATA_CH1_0, visible_and_infrared, 2); // ch 1 - visible and infrared
+        uint8_t infrared[2];
+        ltr303_register_read(LTR303_REG_DATA_CH0_0, infrared, 2); // ch 0 - infrared
 
-        uint16_t light_meas = visible_and_infrared[1]<<8 | visible_and_infrared[0];
-        ESP_LOGI(TAG, "light measurement: %d lux", light_meas);
+        uint16_t light_meas_lux = visible_and_infrared[1]<<8 | visible_and_infrared[0];
+        ESP_LOGI(TAG, "light measurement: %d lux", light_meas_lux);
+        
+        if (abs(target_val_lux - light_meas_lux) > tolerance_lux) { // if alarm val will be updated, set flag to true
+            update_alarm_val = true;
+        }
+        
+        if (abs(target_val_lux - light_meas_lux) > 10*tolerance_lux) {
+            if (target_val_lux > light_meas_lux) {
+                phase_delay_time -= 1000;
+            }
+            else {
+                phase_delay_time += 1000;
+            }
+            delay_seconds = 3;
+        }
+        else if (abs(target_val_lux - light_meas_lux) > 3*tolerance_lux) {
+            if (target_val_lux > light_meas_lux) {
+                phase_delay_time -= 200;
+            }
+            else {
+                phase_delay_time += 200;
+            }
+            delay_seconds = 7;
+        }
+        else if (abs(target_val_lux - light_meas_lux) > tolerance_lux) {
+            if (target_val_lux > light_meas_lux) {
+                phase_delay_time -= 100;
+            }
+            else {
+                phase_delay_time += 100;
+            }
+            delay_seconds = 15;
+        }
+        
+        if (phase_delay_time > 50000) { // if phase_delay_time decreased and overflowed to very high value, reset to minimum time
+            phase_delay_time = 100;
+        }
+        else if (phase_delay_time > 8500) { // if phase_delay_time increased above max, set to 10000 ms (light effectively turned off)
+            phase_delay_time = 10000;
+        }
+
+        ESP_LOGI(TAG, "phase delay time: %d", phase_delay_time);
     }
 }
-
 // integrate with WiFi / mesh network
-// write logic to adjust alarm val based on measurement & target
 
 
 // GPIO example:                        https://github.com/espressif/esp-idf/blob/v5.1/examples/peripherals/gpio/generic_gpio/
