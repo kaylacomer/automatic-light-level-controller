@@ -14,71 +14,21 @@
 #include "driver/gptimer.h"
 #include "esp_timer.h"
 #include "driver/timer.h"
+#include "connect.c"
+#include "light-adjustment.h"
 
 //////////////////////////////////////////////////
-// Pin mapping and global constants
+// Global variables
 //////////////////////////////////////////////////
-#define CONFIG_FREERTOS_HZ 1000
-#define TICK_WAIT_PERIOD 100
-#define CONFIG_COMPILER_OPTIMIZATION -O2
+uint16_t phase_delay_time = PHASE_DELAY_DEFAULT;
+bool update_alarm_val = true;
 
-static const char *TAG = "light-adjustment";
-
-#define ESP_INTR_FLAG_DEFAULT 0
-
-#define GPIO_INPUT_ZERO_CROSS_PIN     2
-#define ZERO_CROSSING_PIN_SEL  (1ULL<<GPIO_INPUT_ZERO_CROSS_PIN)
-
-#define GPIO_INPUT_LTR303_INTR_PIN     5
-#define LTR303_INTR_PIN_SEL (1ULL<<GPIO_INPUT_LTR303_INTR_PIN)
-
-#define GPIO_OUTPUT_TRIAC_TRIGGER_PIN    18
-#define GPIO_OUTPUT_TRIAC_TRIGGER_PIN_SEL  (1ULL<<GPIO_OUTPUT_TRIAC_TRIGGER_PIN)
-
-#define ON  1
-#define OFF 0
-
-#define I2C_MASTER_SCL_IO           26                         /*!< GPIO number used for I2C master clock */
-#define I2C_MASTER_SDA_IO           27                         /*!< GPIO number used for I2C master data  */
-#define I2C_MASTER_NUM              0                          /*!< I2C master i2c port number, the number of i2c peripheral interfaces available will depend on the chip */
-#define I2C_MASTER_FREQ_HZ          100000                     /*!< I2C master clock frequency */
-#define I2C_MASTER_TX_BUF_DISABLE   0                          /*!< I2C master doesn't need buffer */
-#define I2C_MASTER_RX_BUF_DISABLE   0                          /*!< I2C master doesn't need buffer */
-#define I2C_MASTER_TIMEOUT_MS       1000
-
-#define LTR303_SENSOR_ADDR          0x29
-#define LTR303_REG_CONTR            0x80  // operation mode control SW reset
-#define LTR303_REG_CONTR_MODE_BIT      0  // bit to toggle active mode
-#define LTR303_REG_CONTR_4XGAIN_BIT    3  // bit to enable 4X gain -> measurement ranges 0.25 to 16 klux
-#define LTR303_REG_CONTR_2XGAIN_BIT    2  // bit to enable 2X gain -> measurement ranges 0.5 to 32 klux
-#define LTR303_REG_MEAS_RATE        0x85  // measurement rate in active mode
-#define LTR303_REG_MEAS_RATE_BIT       2  // set measurement rate to 2 s
-#define LTR303_REG_DATA_CH1_0       0x88  // CH1 data lower byte
-#define LTR303_REG_DATA_CH1_1       0x89  //           upper
-#define LTR303_REG_DATA_CH0_0       0x8A  // CH0 data lower byte
-#define LTR303_REG_DATA_CH0_1       0x8B  //           upper
-#define LTR303_REG_STATUS           0x8C  // new data status
-#define LTR303_REG_INTERRUPT        0x8F  // interrupt settings
-#define LTR303_REG_INTR_MODE_BIT       1  // bit to toggle interrupt mode (with logic 0 indicating interrupt)
-#define LTR303_REG_THRES_UP_0       0x97  // upper limit of interrupt threshold value, lower byte - interrupt is called if measurement is outside of range
-#define LTR303_REG_THRES_UP_1       0x98  // upper                                   , upper
-#define LTR303_REG_THRES_LOW_0      0x98  // lower                                   , lower
-#define LTR303_REG_THRES_LOW_1      0x98  // lower                                   , upper
-#define LTR303_THRES_LOW_INTR_VAL   0xFF  // value for lower bits so that interrupt is called on every measurement
-
-uint16_t phase_delay_time = 100;
 bool phase_delay_timer_on = false;
 gptimer_handle_t phase_delay_timer = NULL;
 gptimer_alarm_config_t phase_delay_timer_alarm_config = {
     .alarm_count = 0,
     .flags.auto_reload_on_alarm = false,
 };
-
-uint16_t light_meas_lux = 0;
-uint16_t target_val_lux = 0;
-
-bool update_alarm_val = true;
-
 
 //////////////////////////////////////////////////
 // Triac trigger (digital output)
@@ -130,7 +80,7 @@ static void ltr303_setup() {
     ltr303_register_write_byte(LTR303_REG_MEAS_RATE, 1<<LTR303_REG_MEAS_RATE_BIT);
     
     ltr303_register_read(LTR303_REG_MEAS_RATE, data, 1);
-    ESP_LOGI(TAG, "meas rate: %d", LTR303_REG_MEAS_RATE);
+    ESP_LOGI(TAG_subsystem1, "meas rate: %d", LTR303_REG_MEAS_RATE);
 
     // set measurement mode to active
     ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT | 1<<LTR303_REG_CONTR_2XGAIN_BIT);
@@ -167,7 +117,7 @@ static void IRAM_ATTR zero_crossing_isr_handler(void* arg)
     gptimer_set_raw_count(phase_delay_timer, 0);
 
     if (update_alarm_val) {
-        phase_delay_timer_alarm_config.alarm_count = phase_delay_time;
+        phase_delay_timer_alarm_config.alarm_count = device_power ? phase_delay_time : 11000; // if device power off make phase delay timer > 8.3 ms
         gptimer_set_alarm_action(phase_delay_timer, &phase_delay_timer_alarm_config);
         update_alarm_val = false;
     }
@@ -218,78 +168,172 @@ static void phase_delay_timer_setup()
 }
 
 //////////////////////////////////////////////////
+// Update light level
+//////////////////////////////////////////////////
+static uint16_t read_light_level() {
+    uint8_t visible_and_infrared[2];
+    ltr303_register_read(LTR303_REG_DATA_CH1_0, visible_and_infrared, 2); // ch 1 - visible and infrared
+    uint8_t infrared[2];
+    ltr303_register_read(LTR303_REG_DATA_CH0_0, infrared, 2); // ch 0 - infrared
+
+    uint16_t light_meas_lux = visible_and_infrared[1]<<8 | visible_and_infrared[0];
+
+    return light_meas_lux;
+}
+
+//////////////////////////////////////////////////
+// Light range calibration
+//////////////////////////////////////////////////
+static uint16_t range_calibration() {
+    uint16_t temp = phase_delay_time;
+    uint8_t delay_seconds = 5;
+
+   // Determine brightest value
+   phase_delay_time = 50;
+   update_alarm_val = true;
+   vTaskDelay(delay_seconds * 100);
+   uint16_t max_brightness = read_light_level();
+   // Determine dimmest value
+   phase_delay_time = 8300;
+   update_alarm_val = true;
+   vTaskDelay(delay_seconds * 100);
+   uint16_t min_brightness = read_light_level();
+
+   // Set range
+   uint16_t lux_range = (max_brightness - min_brightness);
+   ESP_LOGI(TAG_subsystem1, "lux range: %d lux", lux_range);
+   phase_delay_time = temp; // return phase delay time to previous value
+   return lux_range;
+}
+
+//////////////////////////////////////////////////
+// Update light level
+//////////////////////////////////////////////////
+static uint8_t update_light_level(uint16_t target_val_lux, uint16_t light_meas_lux, uint16_t tolerance_lux, uint8_t delay_seconds) {
+    if (abs(target_val_lux - light_meas_lux) > 20*tolerance_lux) {
+        if (target_val_lux > light_meas_lux) {
+            phase_delay_time -= 1000;
+        }
+        else {
+            phase_delay_time += 1000;
+        }
+        delay_seconds = 3;
+    }
+    else if (abs(target_val_lux - light_meas_lux) > 10*tolerance_lux) {
+        if (target_val_lux > light_meas_lux) {
+            phase_delay_time -= 500;
+        }
+        else {
+            phase_delay_time += 500;
+        }
+        delay_seconds = 3;
+    }
+    else if (abs(target_val_lux - light_meas_lux) > 3*tolerance_lux) {
+        if (target_val_lux > light_meas_lux) {
+            phase_delay_time -= 200;
+        }
+        else {
+            phase_delay_time += 200;
+        }
+        delay_seconds = 7;
+    }
+    else if (abs(target_val_lux - light_meas_lux) > tolerance_lux) {
+        if (target_val_lux > light_meas_lux) {
+            phase_delay_time -= 100;
+        }
+        else {
+            phase_delay_time += 100;
+        }
+        delay_seconds = 15;
+    }
+    
+    if (phase_delay_time > 50000) { // if phase_delay_time decreased and overflowed to very high value, reset to minimum time
+        phase_delay_time = 100;
+    }
+    else if (phase_delay_time > 8500) { // if phase_delay_time increased above max, set to 8000 ms (turned to max value)
+        phase_delay_time = 8300;
+    }
+
+    return delay_seconds;
+}
+
+//////////////////////////////////////////////////
+// Compare target and measured light level
+//////////////////////////////////////////////////
+static uint8_t compare_light_level(uint16_t lux_range, uint8_t delay_seconds) {
+    uint16_t target_val_lux = req_light_level * lux_range / 100; // convert user-set light level percentage to target value in lux
+    uint16_t light_meas_lux = read_light_level();
+    uint16_t tolerance_lux = 100;
+
+    ESP_LOGI(TAG_subsystem1, "target: %d lux", target_val_lux);
+    ESP_LOGI(TAG_subsystem1, "light measurement: %d lux", light_meas_lux);
+    
+    if (abs(target_val_lux - light_meas_lux) > tolerance_lux) { // if alarm val will be updated, set flag to true
+        delay_seconds = update_light_level(target_val_lux, light_meas_lux, tolerance_lux, delay_seconds);
+        update_alarm_val = true;
+    }
+
+    ESP_LOGI(TAG_subsystem1, "phase delay time: %d", phase_delay_time);
+
+    return delay_seconds;
+}
+
+//////////////////////////////////////////////////
 //
 //////////////////////////////////////////////////
 void app_main() {
+    // Subsystem 4 setup
+    /* NVS(Non-Volatile Storage) is a partition in flash memory which stores key-value pairs.
+    We can use NVS to store WiFi configuration.*/
+    esp_err_t ret = nvs_flash_init();
+    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+    {
+      ESP_ERROR_CHECK(nvs_flash_erase());
+      ret = nvs_flash_init();
+    }
+    ESP_ERROR_CHECK(ret);
+
+    ESP_LOGI(TAG_subsystem4, "ESP_WIFI_MODE_STA");
+    WiFi_InitIn_StationMode();
+
+    espnow_init();
+
+    #if IS_MASTER
+        Setup_HTTP_server();
+    #endif
+
+    // Subsystem 1 setup
     trigger_setup();
 
     ESP_ERROR_CHECK(i2c_master_init());
-    ESP_LOGI(TAG, "I2C initialized successfully");
+    ESP_LOGI(TAG_subsystem1, "I2C initialized successfully");
     ltr303_setup();
 
     phase_delay_timer_setup();
 
     zero_crossing_setup();
 
-    target_val_lux = 15000;
-    uint16_t tolerance_lux = 100;
     uint8_t delay_seconds = 3;
+
+    // uint16_t lux_range = range_calibration();
+    uint16_t lux_range = 32000;
 
     while(1) {
         vTaskDelay(delay_seconds * 100);
 
-        uint8_t visible_and_infrared[2];
-        ltr303_register_read(LTR303_REG_DATA_CH1_0, visible_and_infrared, 2); // ch 1 - visible and infrared
-        uint8_t infrared[2];
-        ltr303_register_read(LTR303_REG_DATA_CH0_0, infrared, 2); // ch 0 - infrared
-
-        uint16_t light_meas_lux = visible_and_infrared[1]<<8 | visible_and_infrared[0];
-        ESP_LOGI(TAG, "light measurement: %d lux", light_meas_lux);
-        
-        if (abs(target_val_lux - light_meas_lux) > tolerance_lux) { // if alarm val will be updated, set flag to true
+        if (!device_power) {  // if device set off just run through loop again
             update_alarm_val = true;
-        }
-        
-        if (abs(target_val_lux - light_meas_lux) > 10*tolerance_lux) {
-            if (target_val_lux > light_meas_lux) {
-                phase_delay_time -= 1000;
-            }
-            else {
-                phase_delay_time += 1000;
-            }
             delay_seconds = 3;
-        }
-        else if (abs(target_val_lux - light_meas_lux) > 3*tolerance_lux) {
-            if (target_val_lux > light_meas_lux) {
-                phase_delay_time -= 200;
-            }
-            else {
-                phase_delay_time += 200;
-            }
-            delay_seconds = 7;
-        }
-        else if (abs(target_val_lux - light_meas_lux) > tolerance_lux) {
-            if (target_val_lux > light_meas_lux) {
-                phase_delay_time -= 100;
-            }
-            else {
-                phase_delay_time += 100;
-            }
-            delay_seconds = 15;
-        }
-        
-        if (phase_delay_time > 50000) { // if phase_delay_time decreased and overflowed to very high value, reset to minimum time
-            phase_delay_time = 100;
-        }
-        else if (phase_delay_time > 8500) { // if phase_delay_time increased above max, set to 10000 ms (light effectively turned off)
-            phase_delay_time = 10000;
+            continue;
         }
 
-        ESP_LOGI(TAG, "phase delay time: %d", phase_delay_time);
+        delay_seconds = compare_light_level(lux_range, delay_seconds);
     }
 }
-// integrate with WiFi / mesh network
 
+// get a range of values for light to map percentage to target lux
+// turn on/off
+// may need finer tune for adjustment with different bulb (change lux tolerance)
 
 // GPIO example:                        https://github.com/espressif/esp-idf/blob/v5.1/examples/peripherals/gpio/generic_gpio/
 // GPIO documentation:                  https://docs.espressif.com/projects/esp-idf/en/v4.3/esp32/api-reference/peripherals/gpio.html

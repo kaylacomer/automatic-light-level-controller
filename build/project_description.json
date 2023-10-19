@@ -1,7 +1,7 @@
 {
     "version":            "1",
     "project_name":       "hello_world",
-    "project_version":    "bcacb3d-dirty",
+    "project_version":    "7f9274f-dirty",
     "project_path":       "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller",
     "idf_path":           "/Users/kmcomer/esp/esp-idf",
     "build_dir":          "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller/build",
@@ -805,7 +805,7 @@
             "managed_reqs": [],
             "managed_priv_reqs": [],
             "file": "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller/build/esp-idf/main/libmain.a",
-            "sources": [ "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller/main/light-adjustment.c" ],
+            "sources": [ "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller/main/light-adjustment.c", "/Users/kmcomer/Documents/Purdue/F23/automatic-light-level-controller/main/connect.c" ],
             "include_dirs": []
         },
         "mbedtls": {

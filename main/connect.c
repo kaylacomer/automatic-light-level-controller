@@ -40,8 +40,8 @@ typedef struct
 const char* web_homepage_string = "<!DOCTYPE html><html><head> <title>Light Dimmer Website</title> <style> /* Body */ body { text-align: center; padding: 15px; background-image: url('https://images.unsplash.com/photo-1505506874110-6a7a69069a08?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1887&q=80'); color: #FFD700; } /* Div */ div { margin-bottom: 75px; border-radius: 5px; } /* On/Off Button */ .onoffbutton { background-color: #6A5ACD; height: 100px; width: 100px; border-radius: 10px; color: #FFD700; margin-top: 10px; margin-bottom: 10px; } .onoffbutton:active { background-color: #AAAAAA; } /* Slider */ .slider { -webkit-appearance: none; --sliderOpac: 0.5; width: 100%; height: 8px; background: #d3d3d3; border-radius: 5px; } .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 40px; height: 40px; background: url('https://illustoon.com/photo/dl/5764.png') no-repeat center; background-size: contain; border: none; cursor: pointer; opacity: var(--sliderOpac); } </style></head><body> <h1>Light Dimmer</h1> <div id=\"currentLight\"> <p>Actual Light Level: 50%</p> </div> <label>Select Light Level: </label> <span id=\"sliderVal\">50</span>% <div id=\"lightRange\"> <input type=\"range\" min=\"0\" max=\"100\" step=\"1\" value=\"50\" class=\"slider\" id=\"slider\" /> </div> <div> <input type=\"button\" value=\"Turn On\" class=\"onoffbutton\" id=\"onoff\"> </div> <script> const slider = document.getElementById('slider'); const sliderVal = document.getElementById('sliderVal'); slider.addEventListener(\"input\", event => { const sliderValue = slider.value; sliderVal.textContent = sliderValue; slider.style.setProperty('--sliderOpac', sliderValue / 100 + 0.2); }); slider.addEventListener(\"mouseup\", event => { const sliderValue = slider.value; let roundedValue; var httpRequest = new XMLHttpRequest(); if (sliderValue % 10 === 1 || sliderValue % 10 === 2 || sliderValue % 10 === 8 || sliderValue % 10 === 9) { roundedValue = Math.round(sliderValue / 10) * 10; } else { roundedValue = sliderValue; } sliderVal.textContent = roundedValue; httpRequest.open(\"GET\", \"/light_value?value=\" + roundedValue, true); httpRequest.send()}); const button = document.getElementById('onoff'); let button_val = 0; button.addEventListener(\"mouseup\", event => { var httpRequest = new XMLHttpRequest(); if (button_val === 0) { button_val = 1; } else { button_val = 0 } httpRequest.open(\"GET\", \"/on_off_value?value=\" + button_val, true); httpRequest.send() }); </script></body></html>";
 
 /* Host WiFi Details.   for ee162 wifi        (hotspot)*/
-#define ESP_HOST_WIFI_SSID      "Sams phone"        //"EE162"         //"Sams phone"
-#define ESP_HOST_WIFI_PASS      "thisisgoingtobethepassword"        //"Eceee162"      //"thisisgoingtobethepassword"
+#define ESP_HOST_WIFI_SSID      "Kayla"        //"EE162"         //"Sams phone"
+#define ESP_HOST_WIFI_PASS      "Cliffhang"        //"Eceee162"      //"thisisgoingtobethepassword"
 #define ESP_HOST_MAXIMUM_RETRY  15
 #define CONFIG_ESPNOW_CHANNEL   6           //136             //6 //FOR MY HOTSPOT
 
@@ -54,12 +54,12 @@ static EventGroupHandle_t s_wifi_event_group;
 #define WIFI_CONNECTED_BIT BIT0
 #define WIFI_FAIL_BIT      BIT1
 
-static const char *TAG = "ESP Subsystem4";
+static const char *TAG_subsystem4 = "ESP Subsystem4";
 
 static int s_retry_num = 0;
 
 //SET TO 1 for master device and 0 for all other
-#define IS_MASTER 0
+#define IS_MASTER 1
 
 //Send Params:
 #define CONFIG_ESPNOW_SEND_COUNT 1
@@ -105,18 +105,18 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
         {
             esp_wifi_connect();
             s_retry_num++;
-            ESP_LOGI(TAG, "retry to connect to the AP");
+            ESP_LOGI(TAG_subsystem4, "retry to connect to the AP");
         }
         else
         {
             xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
         }
-        ESP_LOGI(TAG,"connect to the AP fail");
+        ESP_LOGI(TAG_subsystem4,"connect to the AP fail");
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
     {
         ip_event_got_ip_t* event = (ip_event_got_ip_t*) event_data;
-        ESP_LOGI(TAG, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
+        ESP_LOGI(TAG_subsystem4, "got ip:" IPSTR, IP2STR(&event->ip_info.ip));
         s_retry_num = 0;
         xEventGroupSetBits(s_wifi_event_group, WIFI_CONNECTED_BIT);
     }
@@ -187,7 +187,7 @@ void WiFi_InitIn_StationMode(void)
 
     ESP_ERROR_CHECK(esp_wifi_set_channel(CONFIG_ESPNOW_CHANNEL, WIFI_SECOND_CHAN_NONE));
 
-    ESP_LOGI(TAG, "wifi_init_sta finished.");
+    ESP_LOGI(TAG_subsystem4, "wifi_init_sta finished.");
 
     /* Waiting until either the connection is established (WIFI_CONNECTED_BIT) or connection failed for the maximum
      * number of re-tries (WIFI_FAIL_BIT). The bits are set by event_handler() (see above) */
@@ -201,17 +201,17 @@ void WiFi_InitIn_StationMode(void)
      * happened. */
     if (bits & WIFI_CONNECTED_BIT) 
     {
-        ESP_LOGI(TAG, "connected to ap SSID:%s password:%s",
+        ESP_LOGI(TAG_subsystem4, "connected to ap SSID:%s password:%s",
                  ESP_HOST_WIFI_SSID, ESP_HOST_WIFI_PASS);
     }
     else if (bits & WIFI_FAIL_BIT)
     {
-        ESP_LOGI(TAG, "Failed to connect to SSID:%s, password:%s",
+        ESP_LOGI(TAG_subsystem4, "Failed to connect to SSID:%s, password:%s",
                  ESP_HOST_WIFI_SSID, ESP_HOST_WIFI_PASS);
     }
     else
     {
-        ESP_LOGE(TAG, "UNEXPECTED EVENT");
+        ESP_LOGE(TAG_subsystem4, "UNEXPECTED EVENT");
     }
 }
 
@@ -228,13 +228,13 @@ esp_err_t HomePage_req_handler(httpd_req_t *req)
 }
 
 esp_err_t ReceiveLightFrom_Webclient_handler(httpd_req_t *req) {
-    ESP_LOGI(TAG, "RECIEVED GET REQ");
+    ESP_LOGI(TAG_subsystem4, "RECIEVED GET REQ");
     int parsedValue;
     esp_err_t response_status = ESP_OK;
 
     if (sscanf(req->uri, "/light_value?value=%d", &parsedValue) == 1)
     {
-        ESP_LOGI(TAG, "Extracted value: %d", parsedValue);
+        ESP_LOGI(TAG_subsystem4, "Extracted value: %d", parsedValue);
 
         // Create an instance of espnow_data_t to hold the parsed value
         espnow_data_t espnow_data;
@@ -258,15 +258,15 @@ esp_err_t ReceiveLightFrom_Webclient_handler(httpd_req_t *req) {
         esp_err_t result = esp_now_send(send_param.dest_mac, send_param.buffer, send_param.len);
 
         if (result == ESP_OK) {
-            ESP_LOGI(TAG, "Data sent successfully");
+            ESP_LOGI(TAG_subsystem4, "Data sent successfully");
         } else {
-            ESP_LOGE(TAG, "Failed to send data");
+            ESP_LOGE(TAG_subsystem4, "Failed to send data");
             response_status = ESP_FAIL;     //500 (internal server)
         }
     }
     else
     {
-        ESP_LOGE(TAG, "Light_Value Not Found");
+        ESP_LOGE(TAG_subsystem4, "Light_Value Not Found");
         response_status = ESP_ERR_NOT_FOUND;    //404 not found     (MIGHT NOT WORK)
     }
 
@@ -279,13 +279,13 @@ esp_err_t ReceiveLightFrom_Webclient_handler(httpd_req_t *req) {
 }
 
 esp_err_t ReceiveOnOff_Webclient_handler(httpd_req_t *req) {
-    ESP_LOGI(TAG, "RECIEVED GET REQ");
+    ESP_LOGI(TAG_subsystem4, "RECIEVED GET REQ");
     int parsedValue;
     esp_err_t response_status = ESP_OK;
 
     if (sscanf(req->uri, "/on_off_value?value=%d", &parsedValue) == 1)
     {
-        ESP_LOGI(TAG, "The value of on/off switch is: %s", parsedValue ? "On" : "Off");
+        ESP_LOGI(TAG_subsystem4, "The value of on/off switch is: %s", parsedValue ? "On" : "Off");
 
         // Create an instance of espnow_data_t to hold the parsed value
         espnow_data_t espnow_data;
@@ -308,15 +308,15 @@ esp_err_t ReceiveOnOff_Webclient_handler(httpd_req_t *req) {
         esp_err_t result = esp_now_send(send_param.dest_mac, send_param.buffer, send_param.len);
 
         if (result == ESP_OK) {
-            ESP_LOGI(TAG, "Data sent successfully");
+            ESP_LOGI(TAG_subsystem4, "Data sent successfully");
         } else {
-            ESP_LOGE(TAG, "Failed to send data");
+            ESP_LOGE(TAG_subsystem4, "Failed to send data");
             response_status = ESP_FAIL;     //500 (internal server)
         }
     }
     else
     {
-        ESP_LOGE(TAG, "On_Off_Value Not Found");
+        ESP_LOGE(TAG_subsystem4, "On_Off_Value Not Found");
         response_status = ESP_ERR_NOT_FOUND;    //404 not found     (MIGHT NOT WORK)
     }
 
@@ -378,8 +378,8 @@ static esp_err_t espnow_init(void) {
 
     espnow_queue = xQueueCreate(ESPNOW_QUEUE_SIZE, sizeof(espnow_event_t));
     if (espnow_queue == NULL) {
-        ESP_LOGE(TAG, "Create mutex fail");
-        ESP_LOGE(TAG, "Failure point is espnow_queue");
+        ESP_LOGE(TAG_subsystem4, "Create mutex fail");
+        ESP_LOGE(TAG_subsystem4, "Failure point is espnow_queue");
         return ESP_FAIL;
     }
 
@@ -408,7 +408,7 @@ static esp_err_t espnow_init(void) {
     /* Initialize sending parameters. */
     send_param = malloc(sizeof(espnow_send_param_t));
     if (send_param == NULL) {
-        ESP_LOGE(TAG, "Malloc send parameter fail");
+        ESP_LOGE(TAG_subsystem4, "Malloc send parameter fail");
         vSemaphoreDelete(espnow_queue);
         esp_now_deinit();
         return ESP_FAIL;
@@ -423,7 +423,7 @@ static esp_err_t espnow_init(void) {
     send_param->len = CONFIG_ESPNOW_SEND_LEN;
     send_param->buffer = malloc(CONFIG_ESPNOW_SEND_LEN);
     if (send_param->buffer == NULL) {
-        ESP_LOGE(TAG, "Malloc send buffer fail");
+        ESP_LOGE(TAG_subsystem4, "Malloc send buffer fail");
         free(send_param);
         vSemaphoreDelete(espnow_queue);
         esp_now_deinit();
@@ -450,7 +450,7 @@ static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status
     espnow_event_send_cb_t *send_cb = &evt.info.send_cb;
 
     if (mac_addr == NULL) {
-        ESP_LOGE(TAG, "Send cb arg error");
+        ESP_LOGE(TAG_subsystem4, "Send cb arg error");
         return;
     }
 
@@ -458,7 +458,7 @@ static void espnow_send_cb(const uint8_t *mac_addr, esp_now_send_status_t status
     memcpy(send_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
     send_cb->status = status;
     if (xQueueSend(espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
-        ESP_LOGW(TAG, "Send send queue fail");
+        ESP_LOGW(TAG_subsystem4, "Send send queue fail");
     }
 }
 
@@ -469,7 +469,7 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
     uint8_t * mac_addr = recv_info->src_addr;
 
     if (mac_addr == NULL || data == NULL || len <= 0) {
-        ESP_LOGE(TAG, "Receive cb arg error");
+        ESP_LOGE(TAG_subsystem4, "Receive cb arg error");
         return;
     }
 
@@ -477,13 +477,13 @@ static void espnow_recv_cb(const esp_now_recv_info_t *recv_info, const uint8_t *
     memcpy(recv_cb->mac_addr, mac_addr, ESP_NOW_ETH_ALEN);
     recv_cb->data = malloc(len);
     if (recv_cb->data == NULL) {
-        ESP_LOGE(TAG, "Malloc receive data fail");
+        ESP_LOGE(TAG_subsystem4, "Malloc receive data fail");
         return;
     }
     memcpy(recv_cb->data, data, len);
     recv_cb->data_len = len;
     if (xQueueSend(espnow_queue, &evt, ESPNOW_MAXDELAY) != pdTRUE) {
-        ESP_LOGW(TAG, "Send receive queue fail");
+        ESP_LOGW(TAG_subsystem4, "Send receive queue fail");
         free(recv_cb->data);
     }
 }
@@ -511,7 +511,7 @@ int espnow_data_parse(uint8_t *data, uint16_t data_len, int32_t *light_level, ui
     //uint16_t crc, crc_cal = 0;
 
     if (data_len < sizeof(espnow_data_t)) {
-        ESP_LOGE(TAG, "Receive ESPNOW data too short, len:%d", data_len);
+        ESP_LOGE(TAG_subsystem4, "Receive ESPNOW data too short, len:%d", data_len);
         return -1;
     }
 
@@ -545,11 +545,11 @@ static void receive_task(void *pvParameter)
                     int ret = espnow_data_parse(recv_cb->data, recv_cb->data_len, &light_level, &on_off, &magic);
                     free(recv_cb->data);
 
-                    ESP_LOGI(TAG, "Received data from "MACSTR"", MAC2STR(recv_cb->mac_addr));
+                    ESP_LOGI(TAG_subsystem4, "Received data from "MACSTR"", MAC2STR(recv_cb->mac_addr));
                     if(light_level) 
-                        ESP_LOGI(TAG, "light_level: %ld", light_level);
+                        ESP_LOGI(TAG_subsystem4, "light_level: %ld", light_level);
                     else
-                        ESP_LOGI(TAG, "power_button set to: %s", on_off ? "On" : "Off");
+                        ESP_LOGI(TAG_subsystem4, "power_button set to: %s", on_off ? "On" : "Off");
                     break;
                 }
                 default:
@@ -566,18 +566,18 @@ void send_task(void *pvParameters) {
 
     while (1) {
         // Send data using ESP-NOW
-        ESP_LOGI(TAG, "about to send");
+        ESP_LOGI(TAG_subsystem4, "about to send");
         espnow_data_prepare(send_param);
         esp_err_t result = esp_now_send(send_param->dest_mac, send_param->buffer, send_param->len);
 
         if (result == ESP_OK) {
-            ESP_LOGI(TAG, "Data sent successfully");
-            ESP_LOGI(TAG, "send data to "MACSTR"", MAC2STR(send_param->dest_mac));
+            ESP_LOGI(TAG_subsystem4, "Data sent successfully");
+            ESP_LOGI(TAG_subsystem4, "send data to "MACSTR"", MAC2STR(send_param->dest_mac));
         } else {
-            ESP_LOGE(TAG, "Failed to send data");
+            ESP_LOGE(TAG_subsystem4, "Failed to send data");
         }
         if (result == ESP_ERR_ESPNOW_NOT_FOUND)
-            ESP_LOGI(TAG, "THIS IS THE ERROR");
+            ESP_LOGI(TAG_subsystem4, "THIS IS THE ERROR");
 
         // Delay before sending the next data
         vTaskDelay(pdMS_TO_TICKS(5000));  // Adjust the delay as needed     //IS THIS BLOCKING????
@@ -591,24 +591,24 @@ static void espnow_deinit(espnow_send_param_t *send_param) {
     esp_now_deinit();
 }
 
-void app_main(void)
-{
-    /* NVS(Non-Volatile Storage) is a partition in flash memory which stores key-value pairs.
-    We can use NVS to store WiFi configuration.*/
-    esp_err_t ret = nvs_flash_init();
-    if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
-    {
-      ESP_ERROR_CHECK(nvs_flash_erase());
-      ret = nvs_flash_init();
-    }
-    ESP_ERROR_CHECK(ret);
+// void app_main(void)
+// {
+//     /* NVS(Non-Volatile Storage) is a partition in flash memory which stores key-value pairs.
+//     We can use NVS to store WiFi configuration.*/
+//     esp_err_t ret = nvs_flash_init();
+//     if (ret == ESP_ERR_NVS_NO_FREE_PAGES || ret == ESP_ERR_NVS_NEW_VERSION_FOUND)
+//     {
+//       ESP_ERROR_CHECK(nvs_flash_erase());
+//       ret = nvs_flash_init();
+//     }
+//     ESP_ERROR_CHECK(ret);
 
-    ESP_LOGI(TAG, "ESP_WIFI_MODE_STA");
-    WiFi_InitIn_StationMode();
+//     ESP_LOGI(TAG_subsystem4, "ESP_WIFI_MODE_STA");
+//     WiFi_InitIn_StationMode();
 
-    espnow_init();
+//     espnow_init();
 
-#if IS_MASTER
-    Setup_HTTP_server();
-#endif
-}
+// #if IS_MASTER
+//     Setup_HTTP_server();
+// #endif
+// }
