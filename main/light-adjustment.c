@@ -1,20 +1,3 @@
-//////////////////////////////////////////////////
-// Header files
-//////////////////////////////////////////////////
-#include <stdio.h>
-#include <string.h>
-#include <stdlib.h>
-#include <inttypes.h>
-#include "freertos/FreeRTOS.h"
-#include "freertos/task.h"
-#include "freertos/queue.h"
-#include "driver/gpio.h"
-#include "esp_log.h"
-#include "driver/i2c.h"
-#include "driver/gptimer.h"
-#include "esp_timer.h"
-#include "driver/timer.h"
-#include "connect.c"
 #include "light-adjustment.h"
 
 //////////////////////////////////////////////////
@@ -209,40 +192,17 @@ static uint16_t range_calibration() {
 //////////////////////////////////////////////////
 // Update light level
 //////////////////////////////////////////////////
-static uint8_t update_light_level(uint16_t target_val_lux, uint16_t light_meas_lux, uint16_t tolerance_lux, uint8_t delay_seconds) {
-    if (abs(target_val_lux - light_meas_lux) > 20*tolerance_lux) {
-        if (target_val_lux > light_meas_lux) {
-            phase_delay_time -= 1000;
-        }
-        else {
-            phase_delay_time += 1000;
-        }
+static uint8_t update_light_level(uint16_t target_val_lux, uint16_t light_meas_lux, uint16_t tolerance_lux, uint8_t delay_seconds, uint16_t lux_range) {
+    if (abs(target_val_lux - light_meas_lux) > 2*tolerance_lux) {
+        phase_delay_time -= 0.8 * (target_val_lux - light_meas_lux)/lux_range * 8333;
         delay_seconds = 3;
-    }
-    else if (abs(target_val_lux - light_meas_lux) > 10*tolerance_lux) {
-        if (target_val_lux > light_meas_lux) {
-            phase_delay_time -= 500;
-        }
-        else {
-            phase_delay_time += 500;
-        }
-        delay_seconds = 3;
-    }
-    else if (abs(target_val_lux - light_meas_lux) > 3*tolerance_lux) {
-        if (target_val_lux > light_meas_lux) {
-            phase_delay_time -= 200;
-        }
-        else {
-            phase_delay_time += 200;
-        }
-        delay_seconds = 7;
     }
     else if (abs(target_val_lux - light_meas_lux) > tolerance_lux) {
         if (target_val_lux > light_meas_lux) {
-            phase_delay_time -= 100;
+            phase_delay_time -= 10;
         }
         else {
-            phase_delay_time += 100;
+            phase_delay_time += 10;
         }
         delay_seconds = 15;
     }
@@ -250,7 +210,7 @@ static uint8_t update_light_level(uint16_t target_val_lux, uint16_t light_meas_l
     if (phase_delay_time > 50000) { // if phase_delay_time decreased and overflowed to very high value, reset to minimum time
         phase_delay_time = 100;
     }
-    else if (phase_delay_time > 8500) { // if phase_delay_time increased above max, set to 8000 ms (turned to max value)
+    else if (phase_delay_time > 8500) { // if phase_delay_time increased above max, set to 8300 ms (turned to max value)
         phase_delay_time = 8300;
     }
 
@@ -269,7 +229,7 @@ static uint8_t compare_light_level(uint16_t lux_range, uint8_t delay_seconds) {
     ESP_LOGI(TAG_subsystem1, "light measurement: %d lux", light_meas_lux);
     
     if (abs(target_val_lux - light_meas_lux) > tolerance_lux) { // if alarm val will be updated, set flag to true
-        delay_seconds = update_light_level(target_val_lux, light_meas_lux, tolerance_lux, delay_seconds);
+        delay_seconds = update_light_level(target_val_lux, light_meas_lux, tolerance_lux, delay_seconds, lux_range);
         update_alarm_val = true;
     }
 
@@ -302,6 +262,7 @@ void app_main() {
         Setup_HTTP_server();
     #endif
 
+    #if (!IS_MASTER)
     // Subsystem 1 setup
     trigger_setup();
 
@@ -329,11 +290,9 @@ void app_main() {
 
         delay_seconds = compare_light_level(lux_range, delay_seconds);
     }
+    #endif
 }
 
-// get a range of values for light to map percentage to target lux
-// turn on/off
-// may need finer tune for adjustment with different bulb (change lux tolerance)
 
 // GPIO example:                        https://github.com/espressif/esp-idf/blob/v5.1/examples/peripherals/gpio/generic_gpio/
 // GPIO documentation:                  https://docs.espressif.com/projects/esp-idf/en/v4.3/esp32/api-reference/peripherals/gpio.html

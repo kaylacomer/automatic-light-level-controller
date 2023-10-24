@@ -1,3 +1,6 @@
+//SET TO 1 for master device and 0 for all other
+#define IS_MASTER 0
+
 #include <stdio.h>
 #include <string.h>
 #include "freertos/FreeRTOS.h"
@@ -40,10 +43,10 @@ typedef struct
 const char* web_homepage_string = "<!DOCTYPE html><html><head> <title>Light Dimmer Website</title> <style> /* Body */ body { text-align: center; padding: 15px; background-image: url('https://images.unsplash.com/photo-1505506874110-6a7a69069a08?ixlib=rb-4.0.3&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&w=1887&q=80'); color: #FFD700; } /* Div */ div { margin-bottom: 75px; border-radius: 5px; } /* On/Off Button */ .onoffbutton { background-color: #6A5ACD; height: 100px; width: 100px; border-radius: 10px; color: #FFD700; margin-top: 10px; margin-bottom: 10px; } .onoffbutton:active { background-color: #AAAAAA; } /* Slider */ .slider { -webkit-appearance: none; --sliderOpac: 0.5; width: 100%; height: 8px; background: #d3d3d3; border-radius: 5px; } .slider::-webkit-slider-thumb { -webkit-appearance: none; width: 40px; height: 40px; background: url('https://illustoon.com/photo/dl/5764.png') no-repeat center; background-size: contain; border: none; cursor: pointer; opacity: var(--sliderOpac); } </style></head><body> <h1>Light Dimmer</h1> <div id=\"currentLight\"> <p>Actual Light Level: 50%</p> </div> <label>Select Light Level: </label> <span id=\"sliderVal\">50</span>% <div id=\"lightRange\"> <input type=\"range\" min=\"0\" max=\"100\" step=\"1\" value=\"50\" class=\"slider\" id=\"slider\" /> </div> <div> <input type=\"button\" value=\"Turn On\" class=\"onoffbutton\" id=\"onoff\"> </div> <script> const slider = document.getElementById('slider'); const sliderVal = document.getElementById('sliderVal'); slider.addEventListener(\"input\", event => { const sliderValue = slider.value; sliderVal.textContent = sliderValue; slider.style.setProperty('--sliderOpac', sliderValue / 100 + 0.2); }); slider.addEventListener(\"mouseup\", event => { const sliderValue = slider.value; let roundedValue; var httpRequest = new XMLHttpRequest(); if (sliderValue % 10 === 1 || sliderValue % 10 === 2 || sliderValue % 10 === 8 || sliderValue % 10 === 9) { roundedValue = Math.round(sliderValue / 10) * 10; } else { roundedValue = sliderValue; } sliderVal.textContent = roundedValue; httpRequest.open(\"GET\", \"/light_value?value=\" + roundedValue, true); httpRequest.send()}); const button = document.getElementById('onoff'); let button_val = 0; button.addEventListener(\"mouseup\", event => { var httpRequest = new XMLHttpRequest(); if (button_val === 0) { button_val = 1; } else { button_val = 0 } httpRequest.open(\"GET\", \"/on_off_value?value=\" + button_val, true); httpRequest.send() }); </script></body></html>";
 
 /* Host WiFi Details.   for ee162 wifi        (hotspot)*/
-#define ESP_HOST_WIFI_SSID      "Kayla"        //"EE162"         //"Sams phone"
-#define ESP_HOST_WIFI_PASS      "Cliffhang"        //"Eceee162"      //"thisisgoingtobethepassword"
+#define ESP_HOST_WIFI_SSID      "team12"        //"EE162"         //"Sams phone"
+#define ESP_HOST_WIFI_PASS      "Senior Design Sux"        //"Eceee162"      //"thisisgoingtobethepassword"
 #define ESP_HOST_MAXIMUM_RETRY  15
-#define CONFIG_ESPNOW_CHANNEL   6           //136             //6 //FOR MY HOTSPOT
+#define CONFIG_ESPNOW_CHANNEL   11           //136             //6 //FOR MY HOTSPOT
 
 /* FreeRTOS event group to signal when we are connected*/
 static EventGroupHandle_t s_wifi_event_group;
@@ -58,9 +61,6 @@ static const char *TAG_subsystem4 = "ESP Subsystem4";
 
 static int s_retry_num = 0;
 
-//SET TO 1 for master device and 0 for all other
-#define IS_MASTER 1
-
 //Send Params:
 #define CONFIG_ESPNOW_SEND_COUNT 1
 #define CONFIG_ESPNOW_SEND_DELAY 200
@@ -68,8 +68,8 @@ static int s_retry_num = 0;
 #define ESPNOW_MAXDELAY 512
 
 static uint8_t broadcast_mac[ESP_NOW_ETH_ALEN] = { 0xFF, 0xFF, 0xFF, 0xFF, 0xFF, 0xFF };
-static uint8_t master_mac[ESP_NOW_ETH_ALEN] = { 0x30, 0xAE, 0xA4, 0x06, 0x8F, 0x40};
-static uint8_t other_mac_1[ESP_NOW_ETH_ALEN] = { 0xC8, 0x2B, 0x96, 0xB9, 0x9A, 0xC8};
+static uint8_t master_mac[ESP_NOW_ETH_ALEN] = { 0x84, 0x0D, 0x8E, 0xE3, 0xB8, 0x30};
+static uint8_t other_mac_1[ESP_NOW_ETH_ALEN] = { 0x4C, 0x11, 0xAE, 0x70, 0xFD, 0x48};
 
 static QueueHandle_t espnow_queue;
 
@@ -101,16 +101,16 @@ static void event_handler(void* arg, esp_event_base_t event_base, int32_t event_
     }
     else if (event_base == WIFI_EVENT && event_id == WIFI_EVENT_STA_DISCONNECTED)
     {
-        if (s_retry_num < ESP_HOST_MAXIMUM_RETRY) 
-        {
+        // if (s_retry_num < ESP_HOST_MAXIMUM_RETRY) 
+        // {
             esp_wifi_connect();
             s_retry_num++;
             ESP_LOGI(TAG_subsystem4, "retry to connect to the AP");
-        }
-        else
-        {
-            xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
-        }
+        // }
+        // else
+        // {
+        //     xEventGroupSetBits(s_wifi_event_group, WIFI_FAIL_BIT);
+        // }
         ESP_LOGI(TAG_subsystem4,"connect to the AP fail");
     }
     else if (event_base == IP_EVENT && event_id == IP_EVENT_STA_GOT_IP)
@@ -546,16 +546,18 @@ static void receive_task(void *pvParameter)
                     free(recv_cb->data);
 
                     ESP_LOGI(TAG_subsystem4, "Received data from "MACSTR"", MAC2STR(recv_cb->mac_addr));
-                    if(light_level) 
+                    if(light_level) {
                         ESP_LOGI(TAG_subsystem4, "light_level: %ld", light_level);
-                    else
+                        req_light_level = light_level;
+                    }
+                    else {
                         ESP_LOGI(TAG_subsystem4, "power_button set to: %s", on_off ? "On" : "Off");
+                        device_power = on_off;
+                    }
                     break;
                 }
                 default:
                     break;
-                req_light_level = light_level;
-                device_power = on_off;
             }
         }
     }
