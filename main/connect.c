@@ -1,5 +1,5 @@
 //SET TO 1 for master device and 0 for all other
-#define IS_MASTER 0
+#define IS_MASTER 1
 
 #include <stdio.h>
 #include <string.h>

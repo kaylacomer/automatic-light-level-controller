@@ -103,7 +103,7 @@ static void IRAM_ATTR zero_crossing_isr_handler(void* arg)
     gptimer_set_raw_count(phase_delay_timer, 0);
 
     if (update_alarm_val) {
-        phase_delay_timer_alarm_config.alarm_count = (device_power && power_hardware && (phase_delay_time != 8300)) ? phase_delay_time : 30000; // if device power off make phase delay timer > 8.3 ms
+        phase_delay_timer_alarm_config.alarm_count = (device_power && power_hardware && (req_light_level != 0)) ? phase_delay_time : 30000; // if device power off make phase delay timer > 8.3 ms
         gptimer_set_alarm_action(phase_delay_timer, &phase_delay_timer_alarm_config);
         update_alarm_val = false;
     }
@@ -226,18 +226,30 @@ static uint16_t range_calibration() {
 // Update light level
 //////////////////////////////////////////////////
 static uint8_t update_light_level(uint16_t target_val_lux, uint16_t light_meas_lux, uint16_t tolerance_lux, uint8_t delay_seconds, uint16_t lux_range) {
-    if (abs(target_val_lux - light_meas_lux) > 2*tolerance_lux) {
-        phase_delay_time -= 0.8 * (target_val_lux - light_meas_lux)/lux_range * 8333;
+    if (abs(target_val_lux - light_meas_lux) > 5*tolerance_lux) {
+        phase_delay_time -= 1000;
+        delay_seconds = 3;
+    }
+    else if (target_val_lux - light_meas_lux > 5*tolerance_lux) {
+        phase_delay_time += 1000;
+        delay_seconds = 3;
+    }
+    else if (abs(target_val_lux - light_meas_lux) > 2*tolerance_lux) {
+        phase_delay_time -= 200;
+        delay_seconds = 3;
+    }
+    else if (target_val_lux - light_meas_lux > 2*tolerance_lux) {
+        phase_delay_time += 200;
         delay_seconds = 3;
     }
     else if (abs(target_val_lux - light_meas_lux) > tolerance_lux) {
         if (target_val_lux > light_meas_lux) {
-            phase_delay_time -= 10;
+            phase_delay_time -= 100;
         }
         else {
-            phase_delay_time += 10;
+            phase_delay_time += 100;
         }
-        delay_seconds = 15;
+        delay_seconds = 3;
     }
     
     if (phase_delay_time > 50000) { // if phase_delay_time decreased and overflowed to very high value, reset to minimum time
@@ -254,14 +266,17 @@ static uint8_t update_light_level(uint16_t target_val_lux, uint16_t light_meas_l
 // Compare target and measured light level
 //////////////////////////////////////////////////
 static uint8_t compare_light_level(uint16_t lux_range, uint8_t delay_seconds) {
-    uint16_t target_val_lux = req_light_level * lux_range / 100; // convert user-set light level percentage to target value in lux
+    uint16_t target_val_lux = req_light_level == 0 ? 0 : req_light_level * (lux_range) / 100 + 20; // convert user-set light level percentage to target value in lux
     uint16_t light_meas_lux = read_light_level();
-    uint16_t tolerance_lux = 10;
+    uint16_t tolerance_lux = 5;
 
     ESP_LOGI(TAG_subsystem1, "target: %d lux", target_val_lux);
     ESP_LOGI(TAG_subsystem1, "light measurement: %d lux", light_meas_lux);
     
-    if (abs(target_val_lux - light_meas_lux) > tolerance_lux) { // if alarm val will be updated, set flag to true
+    if (target_val_lux == 0) {
+        update_alarm_val = true;
+    }
+    else if (abs(target_val_lux - light_meas_lux) > tolerance_lux) { // if alarm val will be updated, set flag to true
         delay_seconds = update_light_level(target_val_lux, light_meas_lux, tolerance_lux, delay_seconds, lux_range);
         update_alarm_val = true;
     }
@@ -313,7 +328,7 @@ void app_main() {
     uint8_t delay_seconds = 3;
 
     // uint16_t lux_range = range_calibration();
-    uint16_t lux_range = 150;
+    uint16_t lux_range = 60;
 
     while(1) {
         vTaskDelay(delay_seconds * 100);
