@@ -38,6 +38,9 @@ static const char *TAG_subsystem1 = "light-adjustment";
 //////////////////////////////////////////////////
 // Pin mapping
 //////////////////////////////////////////////////
+#define GPIO_INPUT_POWER_BUTTON_PIN 34
+#define POWER_BUTTON_PIN_SEL (1ULL<<GPIO_INPUT_POWER_BUTTON_PIN)
+
 #define GPIO_INPUT_ZERO_CROSS_PIN     2
 #define ZERO_CROSSING_PIN_SEL  (1ULL<<GPIO_INPUT_ZERO_CROSS_PIN)
 
@@ -58,6 +61,7 @@ static const char *TAG_subsystem1 = "light-adjustment";
 #define LTR303_SENSOR_ADDR          0x29
 #define LTR303_REG_CONTR            0x80  // operation mode control SW reset
 #define LTR303_REG_CONTR_MODE_BIT      0  // bit to toggle active mode
+#define LTR303_REG_CONTR_96XGAIN_BIT   7
 #define LTR303_REG_CONTR_4XGAIN_BIT    3  // bit to enable 4X gain -> measurement ranges 0.25 to 16 klux
 #define LTR303_REG_CONTR_2XGAIN_BIT    2  // bit to enable 2X gain -> measurement ranges 0.5 to 32 klux
 #define LTR303_REG_MEAS_RATE        0x85  // measurement rate in active mode

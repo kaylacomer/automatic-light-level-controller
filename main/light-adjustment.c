@@ -13,6 +13,8 @@ gptimer_alarm_config_t phase_delay_timer_alarm_config = {
     .flags.auto_reload_on_alarm = false,
 };
 
+bool power_hardware;
+
 //////////////////////////////////////////////////
 // Triac trigger (digital output)
 //////////////////////////////////////////////////
@@ -66,7 +68,8 @@ static void ltr303_setup() {
     ESP_LOGI(TAG_subsystem1, "meas rate: %d", LTR303_REG_MEAS_RATE);
 
     // set measurement mode to active
-    ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT | 1<<LTR303_REG_CONTR_2XGAIN_BIT);
+    // ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT | 1<<LTR303_REG_CONTR_2XGAIN_BIT);
+    ltr303_register_write_byte(LTR303_REG_CONTR, 1<<LTR303_REG_CONTR_MODE_BIT);
 }
 
 static esp_err_t i2c_master_init(void)
@@ -100,7 +103,7 @@ static void IRAM_ATTR zero_crossing_isr_handler(void* arg)
     gptimer_set_raw_count(phase_delay_timer, 0);
 
     if (update_alarm_val) {
-        phase_delay_timer_alarm_config.alarm_count = device_power ? phase_delay_time : 11000; // if device power off make phase delay timer > 8.3 ms
+        phase_delay_timer_alarm_config.alarm_count = (device_power && power_hardware && (phase_delay_time != 8300)) ? phase_delay_time : 30000; // if device power off make phase delay timer > 8.3 ms
         gptimer_set_alarm_action(phase_delay_timer, &phase_delay_timer_alarm_config);
         update_alarm_val = false;
     }
@@ -119,6 +122,36 @@ void zero_crossing_setup(void)
 
     gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
     gpio_isr_handler_add(GPIO_INPUT_ZERO_CROSS_PIN, zero_crossing_isr_handler, NULL);
+}
+
+TickType_t lastTickTime;
+//////////////////////////////////////////////////
+// Power button (digital input)
+//////////////////////////////////////////////////
+static void IRAM_ATTR power_button_isr_handler(void* arg)
+{
+    bool reading = gpio_get_level(GPIO_INPUT_POWER_BUTTON_PIN);
+    if (abs(xTaskGetTickCountFromISR() - lastTickTime) < 100) {
+        power_hardware = false;
+    }
+    else {
+        power_hardware = reading;
+    }
+    lastTickTime = xTaskGetTickCountFromISR();
+    update_alarm_val = true;
+}
+
+void power_button_setup(void)
+{
+    gpio_config_t io_conf = {};
+    io_conf.intr_type = GPIO_INTR_ANYEDGE;
+    io_conf.pin_bit_mask = POWER_BUTTON_PIN_SEL;
+    io_conf.mode = GPIO_MODE_INPUT;
+    io_conf.pull_down_en = 1;
+    gpio_config(&io_conf);
+
+    gpio_install_isr_service(ESP_INTR_FLAG_DEFAULT);
+    gpio_isr_handler_add(GPIO_INPUT_POWER_BUTTON_PIN, power_button_isr_handler, NULL);
 }
 
 //////////////////////////////////////////////////
@@ -223,7 +256,7 @@ static uint8_t update_light_level(uint16_t target_val_lux, uint16_t light_meas_l
 static uint8_t compare_light_level(uint16_t lux_range, uint8_t delay_seconds) {
     uint16_t target_val_lux = req_light_level * lux_range / 100; // convert user-set light level percentage to target value in lux
     uint16_t light_meas_lux = read_light_level();
-    uint16_t tolerance_lux = 100;
+    uint16_t tolerance_lux = 10;
 
     ESP_LOGI(TAG_subsystem1, "target: %d lux", target_val_lux);
     ESP_LOGI(TAG_subsystem1, "light measurement: %d lux", light_meas_lux);
@@ -262,8 +295,11 @@ void app_main() {
         Setup_HTTP_server();
     #endif
 
-    #if (!IS_MASTER)
     // Subsystem 1 setup
+    // lastTickTime = xTaskGetTickCount;
+    // power_button_setup();
+    // power_hardware = gpio_get_level(GPIO_INPUT_POWER_BUTTON_PIN);
+    power_hardware = true;
     trigger_setup();
 
     ESP_ERROR_CHECK(i2c_master_init());
@@ -277,12 +313,12 @@ void app_main() {
     uint8_t delay_seconds = 3;
 
     // uint16_t lux_range = range_calibration();
-    uint16_t lux_range = 32000;
+    uint16_t lux_range = 150;
 
     while(1) {
         vTaskDelay(delay_seconds * 100);
 
-        if (!device_power) {  // if device set off just run through loop again
+        if (!device_power || !power_hardware) {  // if device set off just run through loop again
             update_alarm_val = true;
             delay_seconds = 3;
             continue;
@@ -290,7 +326,6 @@ void app_main() {
 
         delay_seconds = compare_light_level(lux_range, delay_seconds);
     }
-    #endif
 }
 
 
